@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "log.h"
 
 #define int32u unsigned int
 
@@ -13,6 +14,18 @@
 
 ///////////////////////// Data Structures   //////////////////////////////////////////////////////
 
+enum MessageType {
+	TYPE_APPEND = 'a',
+	TYPE_JOIN = 'j',
+	TYPE_LIKE = 'l',
+	TYPE_UNLIKE = 'r',
+	TYPE_HISTORY = 'h',
+	TYPE_MEMBERSHIP_STATUS = 'v',
+	TYPE_CLIENT_UPDATE = 'c',
+	TYPE_MEMBERSHIP_STATUS_RESPONSE = 'm',
+	TYPE_SERVER_UPDATE = 'u',
+	TYPE_ANTY_ENTROPY = 'e'
+}
 
 typedef struct Session_t {
 	u_int32_t logged_in;
@@ -45,6 +58,8 @@ static	void	Read_message();
 static	void	Usage( int argc, char *argv[] );
 static  void    Print_help();
 static  void	Bye();
+
+static int initialize();
 
 static int handle_login(char* username);
 static int handle_connect(int server_id);
@@ -378,7 +393,7 @@ static void	Read_message()
 static void	Usage(int argc, char *argv[])
 {
 	sprintf( User, "user" );
-	sprintf( Spread_name, "4803");
+	sprintf( Spread_name, "225.1.3.30:10330");
 	while( --argc > 0 )
 	{
 		argv++;
@@ -417,6 +432,12 @@ static void Bye()
 	SP_disconnect( Mbox );
 
 	exit( 0 );
+}
+
+static int initialize()
+{
+
+	return 0;
 }
 
 //////////////////////////   User Event Handlers ////////////////////////////////////////////////////
