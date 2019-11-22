@@ -19,7 +19,7 @@ typedef struct {
 	char message[80];
 	char additionalInfo[200];
 	u_int32_t numOfLikes;
-	char *likers[100];
+	hashset_t likers;
 } Message;
 
 FILE ** log_files; 

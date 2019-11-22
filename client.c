@@ -27,7 +27,8 @@ enum MessageType {
 	TYPE_CLIENT_UPDATE = 'i',
 	TYPE_MEMBERSHIP_STATUS_RESPONSE = 'm',
 	TYPE_SERVER_UPDATE = 's',
-	TYPE_ANTY_ENTROPY = 'e'
+	TYPE_ANTY_ENTROPY = 'e',
+	TYPE_PARTICIPANT_UPDATE = 'p'
 };
 
 typedef struct Session_t {
