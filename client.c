@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "log.h"
+#include "fileService.h"
 
 #define int32u unsigned int
 
@@ -15,25 +16,30 @@
 ///////////////////////// Data Structures   //////////////////////////////////////////////////////
 
 enum MessageType {
+	TYPE_LOGIN = 'u',
+	TYPE_CONNECT = 'c',
 	TYPE_APPEND = 'a',
 	TYPE_JOIN = 'j',
 	TYPE_LIKE = 'l',
 	TYPE_UNLIKE = 'r',
 	TYPE_HISTORY = 'h',
 	TYPE_MEMBERSHIP_STATUS = 'v',
-	TYPE_CLIENT_UPDATE = 'c',
+	TYPE_CLIENT_UPDATE = 'i',
 	TYPE_MEMBERSHIP_STATUS_RESPONSE = 'm',
-	TYPE_SERVER_UPDATE = 'u',
+	TYPE_SERVER_UPDATE = 's',
 	TYPE_ANTY_ENTROPY = 'e'
-}
+};
 
 typedef struct Session_t {
 	u_int32_t logged_in;
 	u_int32_t connected_server;
+	u_int32_t is_connected;
 	u_int32_t is_joined;
 
 	u_int32_t username;
 	u_int32_t chatroom;
+
+	Message messages[25];
 
 } Session ;
 
@@ -104,6 +110,7 @@ int main( int argc, char *argv[] )
 	 printf("User: connected to %s with private group %s\n", Spread_name, Private_group );
 
 	 E_init();
+	 initialize();
 
 	 E_attach_fd( 0, READ_FD, User_command, 0, NULL, LOW_PRIORITY );
 
@@ -137,7 +144,7 @@ static void	User_command()
 
 	switch( command[0] )
 	{
-		case 'u':	// login with username
+		case TYPE_LOGIN:	// login with username
 			ret = sscanf( &command[2], "%s", argument );
 			if( ret < 1 )
 			{
@@ -147,7 +154,7 @@ static void	User_command()
 			handle_login(argument);
 			break;
 
-		case 'c':	// connect to server [1-5]
+		case TYPE_CONNECT:	// connect to server [1-5]
 			ret = sscanf( &command[2], "%s", argument );
 			if( ret < 1 )
 			{
@@ -164,7 +171,7 @@ static void	User_command()
 			}
 			break;
 
-		case 'j':	// join a chatroom
+		case TYPE_JOIN:	// join a chatroom
 			ret = sscanf( &command[2], "%s", argument );
 			if( ret < 1 ) 
 			{
@@ -183,7 +190,7 @@ static void	User_command()
 			}
 			break;
 
-		case 'a':	// append to chatroom
+		case TYPE_APPEND:	// append to chatroom
 			if(!current_session.logged_in){
 				printf(" not logged in yet! \n");
 				break;
@@ -203,7 +210,7 @@ static void	User_command()
 			handle_append(mess, mess_len);
 			break;
 
-		case 'l':	// like a message
+		case TYPE_LIKE:	// like a message
 			ret = sscanf( &command[2], "%s", argument );
 			if( ret < 1 )
 			{
@@ -226,7 +233,7 @@ static void	User_command()
 			handle_like(line_id);
 			break;
 
-		case 'r':		// unlike a message
+		case TYPE_UNLIKE:		// unlike a message
 			ret = sscanf( &command[2], "%s", argument );
 			if( ret < 1 )
 			{
@@ -249,7 +256,7 @@ static void	User_command()
 			handle_unlike(line_id);
 			break;
 
-		case 'h':		// chatroom history
+		case TYPE_HISTORY:		// chatroom history
 			if(!current_session.logged_in){
 				printf(" not logged in yet! \n");
 				break;
@@ -265,7 +272,7 @@ static void	User_command()
 			handle_history();
 			break;
 
-		case 'v':
+		case TYPE_MEMBERSHIP_STATUS:
 			if(!current_session.logged_in){
 				printf(" not logged in yet! \n");
 				break;
@@ -436,56 +443,160 @@ static void Bye()
 
 static int initialize()
 {
-
+	current_session.logged_in = 0;
+	current_session.is_joined = 0;
+	current_session.connected_server = 0;
+	current_session.is_connected = 0;
 	return 0;
 }
 
 //////////////////////////   User Event Handlers ////////////////////////////////////////////////////
+static int sendToServer(char type, char* payload, u_int32_t size)
+{
+	char serverPrivateGroup[80], message[size+1];
+	u_int32_t username_length = (u_int32_t) strlen(current_session.username)
+	message[0] = type;
+	memcpy(message + 1, &username_length, 4);
+	memcpy(message + 5, current_session.username, username_length);
+	memcpy(message + 5 + username_length, payload, size);
+	sprintf(serverPrivateGroup, "server%d", server_id);
+	SP_multicast ( Mbox, AGREED_MESS, serverPrivateGroup, 2, size + username_length + 5, message);
+}
+
+static int sendConnectionRequestToServer()
+{
+	sendToServer(TYPE_CONNECT, "", 0);
+}
+
+static int sendJoinRequestToServer(char *chatroom)
+{
+	int length = strlen(chatroom);
+	char payload[length+4];
+	memcpy(payload, &length, 4);
+	memcpy(payload + 4, chatroom, length);
+	sendToServer(TYPE_JOIN, payload, length+4);
+}
+
+static int sendAppendRequestToServer(char *chatroom, char *message)
+{
+	int c_length = strlen(chatroom);
+	int m_length = strlen(message);
+	char payload[c_length + m_length+8];
+	memcpy(payload, &c_length, 4);
+	memcpy(payload + 4, chatroom, c_length);
+	memcpy(payload+4 + c_length, &m_length, 4);
+	memcpy(payload + 8 + c_length, message, m_length);
+	sendToServer(TYPE_APPEND, payload, c_length+ m_length +8);
+}
+
+static int sendLikeRequestToServer(u_int32_t pid, u_int32_t counter, char *chatroom, char type)
+{
+	int c_length = strlen(chatroom);
+	char payload[c_length +8];
+	memcpy(payload, &c_length, 4);
+	memcpy(payload + 4, chatroom, c_length);
+	memcpy(payload+4 + c_length, &pid, 4);
+	memcpy(payload + 8 + c_length, &counter, 4);
+	sendToServer(type, payload, c_length + 8);
+}
+
+static int sendHistoryRequestToServer(char *chatroom)
+{
+	int length = strlen(chatroom);
+	char payload[length+4];
+	memcpy(payload, &length, 4);
+	memcpy(payload + 4, chatroom, length);
+	sendToServer(TYPE_HISTORY, payload, length+4);
+}
+
+static int sendMembershipRequestToServer()
+{
+	sendToServer(TYPE_MEMBERSHIP_STATUS, "", 0);
+}
+
+static void lineNumberToLTS(int line_number, u_int32_t *pid, u_int32_t *counter)
+{
+	*pid = current_session.messages[line_number-1].serverID;
+	*counter = current_session.messages[line_number-1].lamportCounter;
+}
 
 static int handle_login(char* username)
 {
-
+	memcpy(current_session.username, username, strlen(username));
+	current_session.logged_in = 1;
 	return 0;
 }
 
 static int handle_connect(int server_id)
 {
+	int ret;
+	char server_group_name[80];
+	if(server_id != current_session.connected_server || !current_session.is_connected)
+	{
+		if(current_session.is_connected)
+		{
+			log_info("disconnecting from %d", current_session.connected_server);
+			sprintf(server_group_name, "%s_%d", current_session.username, current_session.connected_server);
+			ret = SP_leave( Mbox, server_group_name);
+			if(ret < 0)
+				SP_error( ret );
+		}
+		log_info("requesting to join %d", server_id);
+		ret = SP_join( Mbox, server_group_name);
+		if(ret < 0)
+			SP_error( ret );
 
-	return 0;
+		sendConnectionRequestToServer();
+		current_session.connected_server = server_id;
+		return 0;
+	}
+	log_warn("Already connected to server %d", server_id);
+	// TODO: When you receive server's membership on this group, set is_connected = true
+
 }
 
 static int join(char* chatroom)
 {
-
+	char chatroom_group_name[80];
+	int ret;
+	sprintf(chatroom_group_name, "#%s_%d", chatroom, current_session.connected_server);
+	ret = SP_join( Mbox, chatroom_group_name);
+	if(ret < 0)
+		SP_error( ret );
+	sendJoinRequestToServer(chatroom);
 	return 0;
 }
 
 static int handle_append(char* message, int size)
 {
-
+	sendAppendRequestToServer(current_session.chatroom, message);
 	return 0;
 }
 
 static int handle_like(int line_number)
 {
-
+	u_int32_t pid, counter;
+	lineNumberToLTS(line_number, &pid, &counter);
+	sendLikeRequestToServer(pid, counter, current_session.chatroom, TYPE_LIKE)
 	return 0;
 }
 
 static int handle_unlike(int line_number)
 {
-
+	u_int32_t pid, counter;
+	lineNumberToLTS(line_number, &pid, &counter);
+	sendLikeRequestToServer(pid, counter, current_session.chatroom, TYPE_UNLIKE)
 	return 0;
 }
 
 static int handle_history()
 {
-
+	sendHistoryRequestToServer(current_session.chatroom);
 	return 0;
 }
 static int handle_membership_status()
 {
-
+	sendMembershipStatusRequestToServer();
 	return 0;
 }
 
