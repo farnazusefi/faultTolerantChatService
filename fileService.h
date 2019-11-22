@@ -18,15 +18,17 @@ typedef struct {
 	char userName[20];
 	char message[80];
 	char additionalInfo[200];
+	u_int32_t numOfLikes;
+	char *likers[100];
 } Message;
 
 FILE ** log_files; 
 
 void get_chatroom_file_name(u_int32_t me, char *chatroom, char *filename);
 
-void create_log_files(u_int32_t me, u_int32_t num_of_servers);
+void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate);
 
-void create_chatroom_file(u_int32_t me, char *chatroom_name);
+void create_chatroom_file(u_int32_t me, char *chatroom_name, int recreate);
 
 void addEventToLogFile(u_int32_t server_id, logEvent e);
 

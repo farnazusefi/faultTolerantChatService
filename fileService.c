@@ -5,7 +5,7 @@ void get_chatroom_file_name(u_int32_t me, char *chatroom, char *filename)
     sprintf(filename, "%d_%s.chatroom", me, chatroom);
 }
 
-void create_log_files(u_int32_t me, u_int32_t num_of_servers)
+void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate)
 {
     int i;
     char filename[20];
@@ -15,19 +15,25 @@ void create_log_files(u_int32_t me, u_int32_t num_of_servers)
     {
         sprintf(filename, "%d_server%d.log", me, i);
         log_info("creating/opening file %s", filename);
-        log_files[i-1] = fopen(filename, "a+");
+        if(recreate)
+        	log_files[i-1] = fopen(filename, "w+");
+        else
+        	log_files[i-1] = fopen(filename, "a+");
     }
 
 }
 
-void create_chatroom_file(u_int32_t me, char *chatroom_name)
+void create_chatroom_file(u_int32_t me, char *chatroom_name, int recreate)
 {
     FILE *f;
     u_int32_t size = 15 + strlen(chatroom_name);
     char filename[size];
     sprintf(filename, "%d_%s.chatroom", me, chatroom_name);
     log_info("creating/opening file %s", filename);
-    f = fopen(filename, "a+");
+    if(recreate)
+    	f = fopen(filename, "w+");
+    else
+    	f = fopen(filename, "a+");
     fclose(f);
 }
 
