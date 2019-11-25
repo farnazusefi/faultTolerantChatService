@@ -9,11 +9,11 @@ all: client server
 .c.o:
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $<
 
-client:  client.o
-	$(LD) -o $@ client.o -ldl $(SP_LIBRARY)
+client:  client.o log.o
+	$(LD) -o $@ client.o log.o -ldl $(SP_LIBRARY)
 
-server:  server.o
-	$(LD) -o $@ server.o -ldl $(SP_LIBRARY)
+server:  server.o log.o hashset.o
+	$(LD) -o $@ server.o log.o hashset.o -ldl $(SP_LIBRARY)
 
 
 clean:

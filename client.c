@@ -80,10 +80,10 @@ static int handle_unlike(int line_number);
 static int handle_history();
 static int handle_membership_status();
 
-static int parse(char *message, int size, int num_groups, char **groups);
+static int parse(char *message, int size, int num_groups);
 static int handle_membership_message(char *sender, int num_groups, membership_info *mem_info, int service_type);
-static int handle_update_response(char *message, int size, int num_groups, char **groups);
-static int handle_membership_status_response(char *message, int size, int num_groups, char **groups);
+static int handle_update_response(char *message, int size, int num_groups);
+static int handle_membership_status_response(char *message, int size, int num_groups);
 
 //////////////////////////   Core Functions  ////////////////////////////////////////////////////
 
@@ -590,14 +590,14 @@ static int handle_membership_status() {
 
 //////////////////////////   Server Event Handlers ////////////////////////////////////////////////////
 
-static int parse(char *message, int size, int num_groups, char **groups) {
+static int parse(char *message, int size, int num_groups) {
 	char type = message[0];
 	switch (type) {
 	case TYPE_CLIENT_UPDATE:
-		handle_update_response(message, size, num_groups, groups);
+		handle_update_response(message, size, num_groups);
 		break;
 	case TYPE_MEMBERSHIP_STATUS_RESPONSE:
-		handle_membership_status_response(message, size, num_groups, groups);
+		handle_membership_status_response(message, size, num_groups);
 		break;
 	default:
 		log_error("Invalid message type received from server %d", type);
@@ -660,7 +660,7 @@ static void displayMessages(){
 	Print_menu();
 }
 
-static int handle_update_response(char *message, int size, int num_groups, char **groups) {
+static int handle_update_response(char *message, int size, int num_groups) {
 	u_int32_t username_size, num_messages, messageSize;
 	int offset = 5;
 	int i, pointer = 0;
@@ -700,7 +700,7 @@ static void displayMembershipStatus(u_int32_t *list, u_int32_t size) {
 	fflush(stdout);
 	Print_menu();
 }
-static int handle_membership_status_response(char *message, int size, int num_groups, char **groups) {
+static int handle_membership_status_response(char *message, int size, int num_groups) {
 
 	u_int32_t numOfMembers;
 	memcpy(&numOfMembers, message + 1, 4);
