@@ -78,13 +78,14 @@ static int initialize();
 static int handle_disconnect(char *username);
 static int handle_connect(char *message, u_int32_t size);
 static int handle_join(char *message, int size);
-static int handle_append(char *message, int size);
+static int handle_append(char *message, int msg_size);
 static int handle_like_unlike(char *message, char event_type);
 static int handle_history();
 static int handle_membership_status();
 
-static int parse(char *message, int size, int num_groups, char **groups);
+static int parse(char *message, int size, int num_groups);
 static int handle_server_update();
+static int handle_participant_update(char *message, int size);
 static int handle_anti_entropy();
 static int handle_membership_change();
 static void update_chatroom_data(int chatroom_index, char *chatroom, u_int32_t payload_length, char *payload);
@@ -96,7 +97,7 @@ static void hashset_clear(hashset_t h)
 	hashset_itr_t iter = hashset_iterator(h);
 	while(hashset_iterator_has_next(iter))
 	{
-		hashset_remove(h, hashset_iterator_value(iter));
+		hashset_remove(h, (void *) hashset_iterator_value(iter));
 	}
 }
 
@@ -140,15 +141,10 @@ static void Read_message() {
 	char sender[MAX_GROUP_NAME];
 	char target_groups[MAX_MEMBERS][MAX_GROUP_NAME];
 	membership_info memb_info;
-	vs_set_info vssets[MAX_VSSETS];
-	unsigned int my_vsset_index;
-	int num_vs_sets;
-	char members[MAX_MEMBERS][MAX_GROUP_NAME];
 	int num_groups;
 	int service_type;
 	int16 mess_type;
 	int endian_mismatch;
-	int i, j;
 	int ret;
 
 	service_type = 0;
@@ -171,7 +167,7 @@ static void Read_message() {
 	}
 	if (Is_regular_mess(service_type)) {
 		log_debug("Received regular message.");
-		parse(mess, ret, num_groups, &target_groups);
+		parse(mess, ret, num_groups);
 
 	} else if (Is_membership_mess(service_type)) {
 		log_debug("Received membership message.");
@@ -226,7 +222,7 @@ static void Bye() {
 	exit(0);
 }
 
-static int parse(char *message, int size, int num_groups, char **groups) {
+static int parse(char *message, int size, int num_groups) {
 	char type;
 	memcpy(&type, message, 1);
 	switch (type) {
@@ -267,10 +263,10 @@ static int parse(char *message, int size, int num_groups, char **groups) {
 	return 0;
 }
 
-// static void log_update_callback(int log_file)
-// {
+static void create_chatroom_from_logs()
+{
 
-// }
+}
 
 static int initialize() {
 	int ret, i;
@@ -306,6 +302,7 @@ static int send_to_servers(char type, char *payload, u_int32_t size)
 	memcpy(message + 1, &current_session.server_id, 4);
 	memcpy(message + 5, payload, size);
 	SP_multicast(Mbox, AGREED_MESS, serversGroup, 2, size + 5, message);
+	return 0;
 }
 
 static void aggregate_participants(hashset_t *agg, int index)
@@ -316,7 +313,7 @@ static void aggregate_participants(hashset_t *agg, int index)
 		hashset_itr_t iter = hashset_iterator(current_session.chatrooms[index].participants[i]);
 		while(hashset_iterator_has_next(iter))
 		{
-			hashset_add(*agg, hashset_iterator_value(iter));
+			hashset_add(*agg, (void *) hashset_iterator_value(iter));
 		}
 	}
 	log_debug("Aggregated participants for chatroom index %d - total participants = %d", index, hashset_num_items(*agg));
@@ -338,7 +335,7 @@ static int send_chatroom_update_to_clients(char* chatroom, int index)
 	iter = hashset_iterator(participants);
 	while(hashset_iterator_has_next(iter))
 	{
-		char * username = (char *)hashset_iterator_value(iter));
+		char * username = (char *)hashset_iterator_value(iter);
 		u_int32_t uname_size = strlen(username);
 		memcpy(message + offset, &uname_size, 4);
 		memcpy(message + offset + 4, username, uname_size);
@@ -353,7 +350,7 @@ static int send_chatroom_update_to_clients(char* chatroom, int index)
 		u_int32_t message_size = strlen(current_session.chatrooms[index].messages[i].message);
 		memcpy(message + offset, &message_size, 4);
 		memcpy(message + offset + 4, current_session.chatrooms[index].messages[i].message, message_size);
-		memcpy(message + offset + 4 + message_size, current_session.chatrooms[index].messages[i].numOfLikes, 4);
+		memcpy(message + offset + 4 + message_size, &current_session.chatrooms[index].messages[i].numOfLikes, 4);
 		offset += (8 + message_size);
 	}
 	log_debug("sending client update for chatroom %s with %d participants and %d messages", chatroom, num_participants, current_session.chatrooms[index].numOf_messages);
@@ -400,7 +397,7 @@ static int create_new_chatroom(char *chatroom)
 	int i;
 	int index = current_session.num_of_chatrooms;
 	log_info("Creating data structures for new chatroom %s", chatroom);
-	current_session.num_of_chatrooms++
+	current_session.num_of_chatrooms++;
 	strcpy(current_session.chatrooms[index].name, chatroom);
 	current_session.chatrooms[index].numOf_messages = 0;
 	current_session.chatrooms[index].message_start_pointer = 0;
@@ -429,7 +426,7 @@ static int send_participant_change_to_servers(char *chatroom, char *username, in
 		iter = hashset_iterator(current_session.chatrooms[index].participants[i]);
 		while(hashset_iterator_has_next(iter))
 		{
-			char * username = (char *)hashset_iterator_value(iter));	// TODO: check 
+			char * username = (char *)hashset_iterator_value(iter);	// TODO: check 
 			uname_size = strlen(username);
 			memcpy(payload + offset, &uname_size, 4);
 			memcpy(payload + offset + 4, username, uname_size);
@@ -437,7 +434,7 @@ static int send_participant_change_to_servers(char *chatroom, char *username, in
 		}
 	}
 	send_to_servers(TYPE_PARTICIPANT_UPDATE, payload, offset + 4 + chatroom_length);
-
+	return 0;
 }
 
 static int handle_join(char *message, int size) {
@@ -453,7 +450,7 @@ static int handle_join(char *message, int size) {
 	if(chatroom_index == -1)
 		chatroom_index = create_new_chatroom(chatroom);
 	hashset_add(current_session.chatrooms[chatroom_index].participants[current_session.server_id], (void *)username);
-	send_participant_change_to_servers(chatroom, username);
+	send_participant_change_to_servers(chatroom, username, chatroom_index);
 	send_chatroom_update_to_clients(chatroom, chatroom_index);
 	return 0;
 }
@@ -474,9 +471,10 @@ static int send_log_update_to_servers(u_int32_t server_id, u_int32_t line_length
 	memcpy(payload + 8, line, line_length);
 	log_debug("sending log line to servers %s", line);
 	send_to_servers(TYPE_SERVER_UPDATE, payload, size);
+	return 0;
 }
 
-static int handle_append(char *message, int size) {
+static int handle_append(char *message, int msg_size) {
 	u_int32_t username_length, chatroom_length, payload_length, offset;
 	u_int32_t size = 0;
 	char username[20], chatroom[20], payload[80];
