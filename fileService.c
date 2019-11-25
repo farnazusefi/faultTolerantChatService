@@ -5,7 +5,7 @@ void get_chatroom_file_name(u_int32_t me, char *chatroom, char *filename)
     sprintf(filename, "%d_%s.chatroom", me, chatroom);
 }
 
-void create_log_files(u_int32_t me, u_int32_t num_of_servers)
+void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate, int *fds)
 {
     int i;
     char filename[20];
@@ -15,33 +15,35 @@ void create_log_files(u_int32_t me, u_int32_t num_of_servers)
     {
         sprintf(filename, "%d_server%d.log", me, i);
         log_info("creating/opening file %s", filename);
-        log_files[i-1] = fopen(filename, "a+");
+        if(recreate)
+        	log_files[i-1] = fopen(filename, "w+");
+        else
+        	log_files[i-1] = fopen(filename, "a+");
+        fds[i-1] = fileno(log_files[i-1]);
     }
 
 }
 
-void create_chatroom_file(u_int32_t me, char *chatroom_name)
+void create_chatroom_file(u_int32_t me, char *chatroom_name, int recreate)
 {
     FILE *f;
     u_int32_t size = 15 + strlen(chatroom_name);
     char filename[size];
     sprintf(filename, "%d_%s.chatroom", me, chatroom_name);
     log_info("creating/opening file %s", filename);
-    f = fopen(filename, "a+");
+    if(recreate)
+    	f = fopen(filename, "w+");
+    else
+    	f = fopen(filename, "a+");
     fclose(f);
 }
 
-void addEventToLogFile(u_int32_t server_id, logEvent e)
+void addEventToLogFile(u_int32_t server_id, char *line)
 {
     FILE * f = log_files[server_id - 1];
-    u_int32_t size = 0;
-    size += (13 + strlen(e.payload));
-    char line[size];
-    sprintf(line, "%u~%c~%s\n", e.lamportCounter, e.eventType, e.payload);
     log_info("writing to file %s", line);
     fwrite(line, 1, strlen(line), f);
     fflush(f);
-
 }
 
 void refineLogFile(u_int32_t lc)
@@ -51,7 +53,7 @@ void refineLogFile(u_int32_t lc)
 
 void parseLineInLogFile(char *line, logEvent *e)
 {
-    sscanf(line, "%d~%c~%[^\t\n~] ~ %s", &e->lamportCounter, &e->eventType, e->payload, e->additionalInfo);
+    sscanf(line, "%d~%[^\t\n~]~%c~%[^\t\n~]~%s", &e->lamportCounter, e->chatroom,  &e->eventType, e->payload, e->additionalInfo);
 }
 
 void addMessageToChatroomFile(u_int32_t me, char *chatroom, Message m)
