@@ -338,7 +338,7 @@ static void Read_message() {
 	}
 	if (Is_regular_mess(service_type)) {
 		log_debug("Regular message received");
-		parse(mess, ret, num_groups, target_groups);
+		parse(mess, ret, num_groups);
 
 	} else if (Is_membership_mess(service_type)) {
 		log_debug("Membership change received");
