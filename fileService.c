@@ -5,7 +5,7 @@ void get_chatroom_file_name(u_int32_t me, char *chatroom, char *filename)
     sprintf(filename, "%d_%s.chatroom", me, chatroom);
 }
 
-void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate)
+void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate, int *fds)
 {
     int i;
     char filename[20];
@@ -19,6 +19,7 @@ void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate)
         	log_files[i-1] = fopen(filename, "w+");
         else
         	log_files[i-1] = fopen(filename, "a+");
+        fds[i-1] = fileno(log_files[i-1]);
     }
 
 }
@@ -52,7 +53,7 @@ void refineLogFile(u_int32_t lc)
 
 void parseLineInLogFile(char *line, logEvent *e)
 {
-    sscanf(line, "%d~%c~%[^\t\n~] ~ %s", &e->lamportCounter, &e->eventType, e->payload, e->additionalInfo);
+    sscanf(line, "%d~%[^\t\n~]~%c~%[^\t\n~]~%s", &e->lamportCounter, e->chatroom,  &e->eventType, e->payload, e->additionalInfo);
 }
 
 void addMessageToChatroomFile(u_int32_t me, char *chatroom, Message m)

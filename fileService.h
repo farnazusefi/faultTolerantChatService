@@ -9,6 +9,7 @@ typedef struct {
 	char eventType;
 	char payload[100];
 	char additionalInfo[20];
+	char chatroom[20];
 
 } logEvent;
 
@@ -26,7 +27,7 @@ FILE ** log_files;
 
 void get_chatroom_file_name(u_int32_t me, char *chatroom, char *filename);
 
-void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate);
+void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate, int *fds);
 
 void create_chatroom_file(u_int32_t me, char *chatroom_name, int recreate);
 
