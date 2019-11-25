@@ -38,7 +38,7 @@ typedef struct Session_t {
 	u_int32_t is_joined;
 
 	char username[20];
-	u_int32_t chatroom;
+	char chatroom[20];
 
 	Message messages[25];
 	u_int32_t numOfMessages;
@@ -338,7 +338,7 @@ static void Read_message() {
 	}
 	if (Is_regular_mess(service_type)) {
 		log_debug("Regular message received");
-		parse(mess, ret, num_groups, &target_groups);
+		parse(mess, ret, num_groups, target_groups);
 
 	} else if (Is_membership_mess(service_type)) {
 		log_debug("Membership change received");
@@ -444,7 +444,7 @@ static int sendToServer(char type, char *payload, u_int32_t size) {
 	memcpy(message + 1, &username_length, 4);
 	memcpy(message + 5, current_session.username, username_length);
 	memcpy(message + 5 + username_length, payload, size);
-	sprintf(serverPrivateGroup, "server%d", server_id);
+	sprintf(serverPrivateGroup, "server%d", current_session.connected_server);
 	ret = SP_multicast(Mbox, AGREED_MESS, serverPrivateGroup, 2, size + username_length + 5, message);
 	log_debug("multicast returned with %d", ret);
 	return 0;
@@ -568,14 +568,14 @@ static int handle_append(char *message, int size) {
 static int handle_like(int line_number) {
 	u_int32_t pid, counter;
 	lineNumberToLTS(line_number, &pid, &counter);
-	sendLikeUnlikeRequestToServer(pid, counter, current_session.chatroom, TYPE_LIKE)
+	sendLikeUnlikeRequestToServer(pid, counter, current_session.chatroom, TYPE_LIKE);
 	return 0;
 }
 
 static int handle_unlike(int line_number) {
 	u_int32_t pid, counter;
 	lineNumberToLTS(line_number, &pid, &counter);
-	sendLikeUnlikeRequestToServer(pid, counter, current_session.chatroom, TYPE_UNLIKE)
+	sendLikeUnlikeRequestToServer(pid, counter, current_session.chatroom, TYPE_UNLIKE);
 	return 0;
 }
 
@@ -597,7 +597,7 @@ static int parse(char *message, int size, int num_groups, char **groups) {
 		handle_update_response(message, size, num_groups, groups);
 		break;
 	case TYPE_MEMBERSHIP_STATUS_RESPONSE:
-		handle_membership_status_response(message, size, num_groups, groups)
+		handle_membership_status_response(message, size, num_groups, groups);
 		break;
 	default:
 		log_error("Invalid message type received from server %d", type);
@@ -651,9 +651,8 @@ static void displayMessages(){
 	}
 	printf("\n");
 	printf("----------\n");
-	int i;
 	for (i = 0; i < current_session.numOfMessages; i++) {
-		printf("%d. %s: %s \t likes: %d\n", current_session.messages[i].userName,
+		printf("%d. %s: %s \t likes: %d\n", i+1, current_session.messages[i].userName,
 				current_session.messages[i].message, current_session.messages[i].numOfLikes);
 	}
 	printf("----------\n");
@@ -667,14 +666,13 @@ static int handle_update_response(char *message, int size, int num_groups, char 
 	int i, pointer = 0;
 	log_debug("Handling client update message");
 	memcpy(&current_session.numOfParticipants, message + 1, 4);
-	u_int32_t participantsList[current_session.numOfParticipants];
 	log_debug("Parsed number of participants %d", current_session.numOfParticipants);
 	for (i = 0; i < current_session.numOfParticipants; i++) {
 		memcpy(&username_size, message + offset, 4);
 		memcpy(&current_session.listOfParticipants[i], message + offset + 4, username_size);
 		offset += (4+username_size);
 	}
-	memccpy(&num_messages, message + offset + (4 * current_session.numOfParticipants), 4);
+	memcpy(&num_messages, message + offset + (4 * current_session.numOfParticipants), 4);
 	log_debug("Parsed number of messages %d", num_messages);
 	for (i = 0; i < num_messages; i++){
 		memcpy(&current_session.messages[i].serverID, message + offset + pointer, 4);
