@@ -1,6 +1,6 @@
 CC=gcc
 LD=gcc
-CFLAGS=-g -Wall -c99
+CFLAGS=-g -Wall -std=c99 -DLOG_USE_COLOR
 CPPFLAGS=-I. -I/home/cs417/exercises/ex3/include
 SP_LIBRARY=/home/cs417/exercises/ex3/libspread-core.a /home/cs417/exercises/ex3/libspread-util.a
 
