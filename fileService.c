@@ -37,17 +37,12 @@ void create_chatroom_file(u_int32_t me, char *chatroom_name, int recreate)
     fclose(f);
 }
 
-void addEventToLogFile(u_int32_t server_id, logEvent e)
+void addEventToLogFile(u_int32_t server_id, char *line)
 {
     FILE * f = log_files[server_id - 1];
-    u_int32_t size = 0;
-    size += (13 + strlen(e.payload));
-    char line[size];
-    sprintf(line, "%u~%c~%s\n", e.lamportCounter, e.eventType, e.payload);
     log_info("writing to file %s", line);
     fwrite(line, 1, strlen(line), f);
     fflush(f);
-
 }
 
 void refineLogFile(u_int32_t lc)

@@ -53,10 +53,10 @@ typedef struct Session_t {
 Session current_session;
 static char User[80];
 static char Spread_name[80];
+static int debug_level;
 
 static char Private_group[MAX_GROUP_NAME];
 static mailbox Mbox;
-static int Num_sent;
 
 static int To_exit = 0;
 
@@ -116,12 +116,11 @@ int main(int argc, char *argv[]) {
 
 	E_attach_fd(Mbox, READ_FD, Read_message, 0, NULL, HIGH_PRIORITY);
 
+	// TODO: do we need while true here?
 	Print_menu();
 
 	printf("\nUser> ");
 	fflush(stdout);
-
-	Num_sent = 0;
 
 	E_handle_events();
 
@@ -129,13 +128,11 @@ int main(int argc, char *argv[]) {
 }
 
 static void User_command() {
-	char command[130];  //
-	char mess[MAX_MESSLEN];  //
-	char argument[80]; //
-	unsigned int mess_len; //
-	int ret; //
-	int i; //
-	int server_id, line_id;
+	char command[130];
+	char mess[MAX_MESSLEN];
+	char argument[80];
+	unsigned int mess_len;
+	int ret, i, server_id, line_id;
 
 	for (i = 0; i < sizeof(command); i++)
 		command[i] = 0;
@@ -173,7 +170,7 @@ static void User_command() {
 			break;
 		}
 		if (current_session.logged_in) {
-			if (current_session.connected_server)
+			if (current_session.is_connected)
 				join(argument);
 			else
 				printf(" not connected to any server! \n");
@@ -187,7 +184,7 @@ static void User_command() {
 			printf(" not logged in yet! \n");
 			break;
 		}
-		if (!current_session.connected_server) {
+		if (!current_session.is_connected) {
 			printf(" not connected to any server \n");
 			break;
 		}
@@ -203,9 +200,9 @@ static void User_command() {
 		break;
 
 	case TYPE_LIKE:	// like a message
-		ret = sscanf(&command[2], "%s", argument);
+		ret = sscanf(&command[2], "%d", line_id);
 		if (ret < 1) {
-			printf(" invalid chatroom \n");
+			printf(" invalid line number \n");
 			break;
 		}
 		if (!current_session.logged_in) {
@@ -220,14 +217,13 @@ static void User_command() {
 			printf(" not joined any chatroom yet! \n");
 			break;
 		}
-		line_id = atoi(argument);
 		handle_like(line_id);
 		break;
 
 	case TYPE_UNLIKE:		// unlike a message
-		ret = sscanf(&command[2], "%s", argument);
+		ret = sscanf(&command[2], "%d", line_id);
 		if (ret < 1) {
-			printf(" invalid chatroom \n");
+			printf(" invalid line number \n");
 			break;
 		}
 		if (!current_session.logged_in) {
@@ -242,7 +238,6 @@ static void User_command() {
 			printf(" not joined any chatroom yet! \n");
 			break;
 		}
-		line_id = atoi(argument);
 		handle_unlike(line_id);
 		break;
 
@@ -287,7 +282,6 @@ static void User_command() {
 	}
 	printf("\nUser> ");
 	fflush(stdout);
-
 }
 
 static void Print_menu() {
@@ -335,42 +329,45 @@ static void Read_message() {
 	if (ret < 0) {
 		if ((ret == GROUPS_TOO_SHORT) || (ret == BUFFER_TOO_SHORT)) {
 			service_type = DROP_RECV;
-			printf("\n========Buffers or Groups too Short=======\n");
+			log_error("\n========Buffers or Groups too Short=======\n");
 			ret = SP_receive(Mbox, &service_type, sender, MAX_MEMBERS, &num_groups, target_groups, &mess_type, &endian_mismatch, sizeof(mess), mess);
 		}
 	}
 	if (ret < 0) {
 		if (!To_exit) {
 			SP_error(ret);
-			printf("\n============================\n");
-			printf("\nBye.\n");
+			log_fatal("\n============================\n");
+			log_fatal("\nBye.\n");
 		}
 		exit(0);
 	}
 	if (Is_regular_mess(service_type)) {
+		log_debug("Regular message received")
 		parse(mess, ret, num_groups, &target_groups);
 
 	} else if (Is_membership_mess(service_type)) {
+		log_debug("Membership change received")
 		ret = SP_get_memb_info(mess, service_type, &memb_info);
 		if (ret < 0) {
-			printf("BUG: membership message does not have valid body\n");
+			log_fatal("BUG: membership message does not have valid body\n");
 			SP_error(ret);
 			exit(1);
 		}
 		if (Is_reg_memb_mess(service_type)) {
+			log_debug("handling membership change");
 			handle_membership_message(sender, num_groups, &memb_info, service_type);
 
 		} else if (Is_transition_mess(service_type)) {
-			printf("received TRANSITIONAL membership for group %s\n", sender);
+			log_info("received TRANSITIONAL membership for group %s\n", sender);
 		} else if (Is_caused_leave_mess(service_type)) {
-			printf("received membership message that left group %s\n", sender);
+			log_info("received membership message that left group %s\n", sender);
 		} else
-			printf("received incorrecty membership message of type 0x%x\n", service_type);
+			log_error("received incorrecty membership message of type 0x%x\n", service_type);
 	} else if (Is_reject_mess(service_type)) {
-		printf("REJECTED message from %s, of servicetype 0x%x messtype %d, (endian %d) to %d groups \n(%d bytes): %s\n", sender, service_type, mess_type,
+		log_error("REJECTED message from %s, of servicetype 0x%x messtype %d, (endian %d) to %d groups \n(%d bytes): %s\n", sender, service_type, mess_type,
 				endian_mismatch, num_groups, ret, mess);
 	} else
-		printf("received message of unknown message type 0x%x with ret %d\n", service_type, ret);
+		log_error("received message of unknown message type 0x%x with ret %d\n", service_type, ret);
 
 	printf("\n");
 	printf("User> ");
@@ -378,6 +375,7 @@ static void Read_message() {
 }
 
 static void Usage(int argc, char *argv[]) {
+	char debug_level_str[10];
 	sprintf(User, "user");
 	sprintf(Spread_name, "225.1.3.30:10330");
 	while (--argc > 0) {
@@ -397,20 +395,28 @@ static void Usage(int argc, char *argv[]) {
 			strcpy(Spread_name, argv[1]);
 			argc--;
 			argv++;
+		} else if (!strncmp(*argv, "-d", 2)) {
+			if (argc < 2)
+				Print_help();
+			strcpy(debug_level_str, argv[1]);
+			debug_level = atoi(debug_level_str);
+			log_set_level(debug_level);
+			argc--;
+			argv++;
 		} else {
 			Print_help();
 		}
 	}
 }
 static void Print_help() {
-	printf("Usage: spuser\n%s\n%s\n%s\n", "\t[-u <user name>]  : unique (in this machine) user name", "\t[-s <address>]    : either port or port@machine",
-			"\t[-r ]    : use random user name");
+	printf("Usage: spuser\n%s\n%s\n%s\n%s\n", "\t[-u <user name>]  : unique (in this machine) user name", "\t[-s <address>]    : either port or port@machine",
+			"\t[-r ]    : use random user name", "\t[-d <log_level> ]    : choose between [0-7] default is 2");
 	exit(0);
 }
 static void Bye() {
 	To_exit = 1;
 
-	printf("\nBye.\n");
+	log_info("\nBye.\n");
 
 	SP_disconnect(Mbox);
 
@@ -418,6 +424,7 @@ static void Bye() {
 }
 
 static int initialize() {
+	log_info("Initializing data structures.");
 	current_session.logged_in = 0;
 	current_session.is_joined = 0;
 	current_session.connected_server = 0;
@@ -427,24 +434,29 @@ static int initialize() {
 	for (i = 0; i < MAX_PARTICIPANTS; i++){
 		current_session.listOfParticipants [i] = (char*) malloc(20);
 	}
+	log_debug("list of participants initialized");
 	return 0;
 }
 
 //////////////////////////   User Event Handlers ////////////////////////////////////////////////////
+
 static int sendToServer(char type, char *payload, u_int32_t size) {
 	char serverPrivateGroup[80], message[size + 1];
-	u_int32_t username_length = (u_int32_t) strlen(current_session.username)
+	int ret;
+	u_int32_t username_length = (u_int32_t) strlen(current_session.username);
+	log_debug("sending to server type = %c", type);
 	message[0] = type;
 	memcpy(message + 1, &username_length, 4);
 	memcpy(message + 5, current_session.username, username_length);
 	memcpy(message + 5 + username_length, payload, size);
 	sprintf(serverPrivateGroup, "server%d", server_id);
-	SP_multicast(Mbox, AGREED_MESS, serverPrivateGroup, 2, size + username_length + 5, message);
+	ret = SP_multicast(Mbox, AGREED_MESS, serverPrivateGroup, 2, size + username_length + 5, message);
+	log_debug("multicast returned with %d", ret);
 	return 0;
-
 }
 
 static int sendConnectionRequestToServer() {
+	log_debug("sending connection request to server");
 	sendToServer(TYPE_CONNECT, "", 0);
 	return 0;
 
@@ -453,6 +465,7 @@ static int sendConnectionRequestToServer() {
 static int sendJoinRequestToServer(char *chatroom) {
 	int length = strlen(chatroom);
 	char payload[length + 4];
+	log_debug("sending join request to server for chatroom = %s", chatroom);
 	memcpy(payload, &length, 4);
 	memcpy(payload + 4, chatroom, length);
 	sendToServer(TYPE_JOIN, payload, length + 4);
@@ -464,6 +477,7 @@ static int sendAppendRequestToServer(char *chatroom, char *message) {
 	int c_length = strlen(chatroom);
 	int m_length = strlen(message);
 	char payload[c_length + m_length + 8];
+	log_debug("sending append request to server for chatroom = %s, message = %s", chatroom, message);
 	memcpy(payload, &c_length, 4);
 	memcpy(payload + 4, chatroom, c_length);
 	memcpy(payload + 4 + c_length, &m_length, 4);
@@ -473,9 +487,10 @@ static int sendAppendRequestToServer(char *chatroom, char *message) {
 
 }
 
-static int sendLikeRequestToServer(u_int32_t pid, u_int32_t counter, char *chatroom, char type) {
+static int sendLikeUnlikeRequestToServer(u_int32_t pid, u_int32_t counter, char *chatroom, char type) {
 	int c_length = strlen(chatroom);
 	char payload[c_length + 8];
+	log_debug("sending %c request to server for chatroom = %s, message LTS = %d,%d", type, chatroom, pid, counter);
 	memcpy(payload, &c_length, 4);
 	memcpy(payload + 4, chatroom, c_length);
 	memcpy(payload + 4 + c_length, &pid, 4);
@@ -488,6 +503,7 @@ static int sendLikeRequestToServer(u_int32_t pid, u_int32_t counter, char *chatr
 static int sendHistoryRequestToServer(char *chatroom) {
 	int length = strlen(chatroom);
 	char payload[length + 4];
+	log_debug("sending history request to server for chatroom = %s", chatroom);
 	memcpy(payload, &length, 4);
 	memcpy(payload + 4, chatroom, length);
 	sendToServer(TYPE_HISTORY, payload, length + 4);
@@ -495,6 +511,7 @@ static int sendHistoryRequestToServer(char *chatroom) {
 }
 
 static int sendMembershipRequestToServer() {
+	log_debug("sending membership status request to server ");
 	sendToServer(TYPE_MEMBERSHIP_STATUS, "", 0);
 	return 0;
 }
@@ -502,11 +519,13 @@ static int sendMembershipRequestToServer() {
 static void lineNumberToLTS(int line_number, u_int32_t *pid, u_int32_t *counter) {
 	*pid = current_session.messages[line_number - 1].serverID;
 	*counter = current_session.messages[line_number - 1].lamportCounter;
+	log_debug("line number %d changed to pid %d and counter %d", line_number, *pid, *counter);
 }
 
 static int handle_login(char *username) {
 	memcpy(current_session.username, username, strlen(username));
 	current_session.logged_in = 1;
+	log_info("Welcome %s!", username);
 	return 0;
 }
 
@@ -531,14 +550,14 @@ static int handle_connect(int server_id) {
 		return 0;
 	}
 	log_warn("Already connected to server %d", server_id);
-	// TODO: When you receive server's membership on this group, set is_connected = true
-
+	return 0;
 }
 
 static int join(char *chatroom) {
 	char chatroom_group_name[80];
 	int ret;
 	sprintf(chatroom_group_name, "#%s_%d", chatroom, current_session.connected_server);
+	log_info("joining Spread group %s", chatroom_group_name);
 	ret = SP_join(Mbox, chatroom_group_name);
 	if (ret < 0)
 		SP_error(ret);
@@ -554,14 +573,14 @@ static int handle_append(char *message, int size) {
 static int handle_like(int line_number) {
 	u_int32_t pid, counter;
 	lineNumberToLTS(line_number, &pid, &counter);
-	sendLikeRequestToServer(pid, counter, current_session.chatroom, TYPE_LIKE)
+	sendLikeUnlikeRequestToServer(pid, counter, current_session.chatroom, TYPE_LIKE)
 	return 0;
 }
 
 static int handle_unlike(int line_number) {
 	u_int32_t pid, counter;
 	lineNumberToLTS(line_number, &pid, &counter);
-	sendLikeRequestToServer(pid, counter, current_session.chatroom, TYPE_UNLIKE)
+	sendLikeUnlikeRequestToServer(pid, counter, current_session.chatroom, TYPE_UNLIKE)
 	return 0;
 }
 
@@ -586,6 +605,7 @@ static int parse(char *message, int size, int num_groups, char **groups) {
 		handle_membership_status_response(message, size, num_groups, groups)
 		break;
 	default:
+		log_error("Invalid message type received from server %d", type);
 		break;
 	}
 	return 0;
@@ -593,8 +613,8 @@ static int parse(char *message, int size, int num_groups, char **groups) {
 
 static void display_disconnection_to_user()
 {
-	printf("-----------------------\n");
-	printf("You are disconnected from the server. Try connecting again.\n");
+	log_warn("-----------------------\n");
+	log_warn("You are disconnected from the server. Try connecting again.\n");
 	Print_menu();
 }
 
@@ -602,6 +622,7 @@ static int handle_membership_message(char *sender, int num_groups, struct member
 
 	char username[20];
 	int serverID;
+	log_debug("Handling membership change");
 	sscanf(sender, "%s_%d", username, &serverID);
 	int ret = strcmp(username, current_session.username);
 	if (ret == 0)
@@ -617,60 +638,58 @@ static int handle_membership_message(char *sender, int num_groups, struct member
 		}
 		if(Is_caused_join_mess(service_type))
 		{
+			log_info("Successfully connected to server %d", current_session.connected_server);
 			current_session.is_connected = 1;
 		}
 	}
-
-
 	return 0;
 }
 
 static void displayMessages(){
 	printf("\n");
-		printf("==========\n");
-		printf("room: %s\n", current_session.chatroom);
-		printf("currentParticipants: ");
-		int i;
-		for (i=0; i< current_session.numOfParticipants; i++){
-			printf("%s,",current_session.listOfParticipants[i]);
-		}
-		printf("\n");
-		printf("----------\n");
-		int i;
-		for (i = 0; i < current_session.numOfMessages; i++) {
-			printf("%d. %s: %s \t likes: %d\n", current_session.messages[i].userName,
-					current_session.messages[i].message, current_session.messages[i].numOfLikes);
-		}
-		printf("----------\n");
-		fflush(stdout);
-		Print_menu();
+	printf("==========\n");
+	printf("room: %s\n", current_session.chatroom);
+	printf("currentParticipants: ");
+	int i;
+	for (i=0; i< current_session.numOfParticipants; i++){
+		printf("%s,",current_session.listOfParticipants[i]);
+	}
+	printf("\n");
+	printf("----------\n");
+	int i;
+	for (i = 0; i < current_session.numOfMessages; i++) {
+		printf("%d. %s: %s \t likes: %d\n", current_session.messages[i].userName,
+				current_session.messages[i].message, current_session.messages[i].numOfLikes);
+	}
+	printf("----------\n");
+	fflush(stdout);
+	Print_menu();
 }
-static int handle_update_response(char *message, int size, int num_groups, char **groups) {
 
+static int handle_update_response(char *message, int size, int num_groups, char **groups) {
+	u_int32_t username_size, num_messages, messageSize;
+	int offset = 5;
+	int i, pointer = 0;
+	log_debug("Handling client update message");
 	memcpy(&current_session.numOfParticipants, message + 1, 4);
 	u_int32_t participantsList[current_session.numOfParticipants];
-	int offset = 5;
-	u_int32_t username_size;
-	int i;
+	log_debug("Parsed number of participants %d", current_session.numOfParticipants);
 	for (i = 0; i < current_session.numOfParticipants; i++) {
 		memcpy(&username_size, message + offset, 4);
 		memcpy(&current_session.listOfParticipants[i], message + offset + 4, username_size);
 		offset += (4+username_size);
 	}
-	u_int32_t numOfMessages;
-	memccpy(&numOfMessages, message + offset + (4 * current_session.numOfParticipants), 4);
-	int pointer = 0;
-	int i;
-	for (i = 0; i < numOfMessages; i++){
+	memccpy(&num_messages, message + offset + (4 * current_session.numOfParticipants), 4);
+	log_debug("Parsed number of messages %d", num_messages);
+	for (i = 0; i < num_messages; i++){
 		memcpy(&current_session.messages[i].serverID, message + offset + pointer, 4);
 		memcpy(&current_session.messages[i].lamportCounter, message + offset + pointer + 4, 4);
-		u_int32_t messageSize ;
 		memcpy(&messageSize, message + offset + pointer + 8, 4);
 		memcpy(&current_session.messages[i].message, message + offset + pointer +12, messageSize);
 		memcpy(&current_session.messages[i].numOfLikes, message + offset + pointer + 16 + messageSize, 4);
 		pointer += (16 + messageSize);
 	}
-	current_session.numOfMessages = numOfMessages;
+	current_session.numOfMessages = num_messages;
 	displayMessages();
 	return 0;
 }
@@ -694,6 +713,7 @@ static int handle_membership_status_response(char *message, int size, int num_gr
 	memcpy(&numOfMembers, message + 1, 4);
 	u_int32_t membersList[numOfMembers];
 	int i;
+	log_debug("Handling membership status response");
 	for (i = 0; i < numOfMembers; i++) {
 		memcpy(&membersList[i], message + 5 + (4 * i), 4);
 	}

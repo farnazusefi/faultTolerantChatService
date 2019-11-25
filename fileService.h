@@ -30,7 +30,7 @@ void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate);
 
 void create_chatroom_file(u_int32_t me, char *chatroom_name, int recreate);
 
-void addEventToLogFile(u_int32_t server_id, logEvent e);
+void addEventToLogFile(u_int32_t server_id, char *line);
 
 void refineLogFile(u_int32_t lc);
 
