@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "log.h"
+#include "include/hashset/hashset.h"
 
 typedef struct {
 	u_int32_t lamportCounter;

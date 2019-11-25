@@ -6,8 +6,8 @@
 #include <string.h>
 #include "log.h"
 #include "fileService.h"
-#include "hashset.h"
-#include "hashset_itr.h"
+#include "include/hashset/hashset.h"
+#include "include/hashset/hashset_itr.h"
 
 #define MAX_MESSLEN     102400
 #define MAX_VSSETS      10
