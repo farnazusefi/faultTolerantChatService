@@ -490,7 +490,7 @@ static int handle_append(char *message, int msg_size) {
 	if(chatroom_index == -1)
 	{
 		log_fatal("chatroom not found. This should not happen, right???????");
-		return;
+		return 0;
 	}
 	offset = username_length + chatroom_length + 9;
 	memcpy(&payload_length, message + offset, 4);
