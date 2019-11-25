@@ -37,7 +37,7 @@ typedef struct Session_t {
 	u_int32_t is_connected;
 	u_int32_t is_joined;
 
-	u_int32_t username;
+	char username[20];
 	u_int32_t chatroom;
 
 	Message messages[25];
@@ -81,7 +81,7 @@ static int handle_history();
 static int handle_membership_status();
 
 static int parse(char *message, int size, int num_groups, char **groups);
-static int handle_membership_message(char *sender, int num_groups, struct membership_info *mem_info, int service_type);
+static int handle_membership_message(char *sender, int num_groups, membership_info *mem_info, int service_type);
 static int handle_update_response(char *message, int size, int num_groups, char **groups);
 static int handle_membership_status_response(char *message, int size, int num_groups, char **groups);
 
@@ -200,7 +200,7 @@ static void User_command() {
 		break;
 
 	case TYPE_LIKE:	// like a message
-		ret = sscanf(&command[2], "%d", line_id);
+		ret = sscanf(&command[2], "%d", &line_id);
 		if (ret < 1) {
 			printf(" invalid line number \n");
 			break;
@@ -221,7 +221,7 @@ static void User_command() {
 		break;
 
 	case TYPE_UNLIKE:		// unlike a message
-		ret = sscanf(&command[2], "%d", line_id);
+		ret = sscanf(&command[2], "%d", &line_id);
 		if (ret < 1) {
 			printf(" invalid line number \n");
 			break;
@@ -312,15 +312,10 @@ static void Read_message() {
 	char sender[MAX_GROUP_NAME];
 	char target_groups[MAX_MEMBERS][MAX_GROUP_NAME];
 	membership_info memb_info;
-	vs_set_info vssets[MAX_VSSETS];
-	unsigned int my_vsset_index;
-	int num_vs_sets;
-	char members[MAX_MEMBERS][MAX_GROUP_NAME];
 	int num_groups;
 	int service_type;
 	int16 mess_type;
 	int endian_mismatch;
-	int i, j;
 	int ret;
 
 	service_type = 0;
@@ -342,11 +337,11 @@ static void Read_message() {
 		exit(0);
 	}
 	if (Is_regular_mess(service_type)) {
-		log_debug("Regular message received")
+		log_debug("Regular message received");
 		parse(mess, ret, num_groups, &target_groups);
 
 	} else if (Is_membership_mess(service_type)) {
-		log_debug("Membership change received")
+		log_debug("Membership change received");
 		ret = SP_get_memb_info(mess, service_type, &memb_info);
 		if (ret < 0) {
 			log_fatal("BUG: membership message does not have valid body\n");
@@ -618,7 +613,7 @@ static void display_disconnection_to_user()
 	Print_menu();
 }
 
-static int handle_membership_message(char *sender, int num_groups, struct membership_info *mem_info, int service_type) {
+static int handle_membership_message(char *sender, int num_groups, membership_info *mem_info, int service_type) {
 
 	char username[20];
 	int serverID;
