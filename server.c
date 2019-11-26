@@ -218,6 +218,7 @@ static void Bye() {
 static int parse(char *message, int size, int num_groups) {
 	char type;
 	memcpy(&type, message, 1);
+    log_debug("Type is %c", type);
 	switch (type) {
 	case TYPE_CONNECT:
 		handle_connect(message, size);
@@ -328,7 +329,7 @@ static int send_chatroom_update_to_clients(char* chatroom, int index)
 	u_int32_t num_participants;
 	int offset = 5;
 	message[0] = TYPE_CLIENT_UPDATE;
-	sprintf(chatroomGroup, "#%s_%d", chatroom, current_session.server_id);
+	sprintf(chatroomGroup, "CHATROOM_%s_%d", chatroom, current_session.server_id);
 	aggregate_participants(&participants, index);
 	num_participants = hashset_num_items(participants);
 	memcpy(message + 1, &num_participants, 4);
@@ -446,7 +447,7 @@ static int handle_join(char *message, int size) {
 	memcpy(username, message + 5, username_length);
 	memcpy(&chatroom_length, message + 5 + username_length, 4);
 	memcpy(chatroom, message + 9 + username_length, chatroom_length);
-	log_debug("Handling client join request username = %s, chatroom = %s", username, chatroom);
+	log_debug("Handling client join request username = %s, chatroom length = %d, chatroom = %s", username, chatroom_length, chatroom);
 	chatroom_index = find_chatroom_index(chatroom);
 	if(chatroom_index == -1)
 		chatroom_index = create_new_chatroom(chatroom);
@@ -633,6 +634,8 @@ static int handle_participant_update(char *message, int msg_size) {
 	memcpy(&server_id, message + 1, 4);
 	memcpy(&chatroom_length, message + 5, 4);
 	memcpy(&chatroom, message + 9, chatroom_length);
+    if(server_id == current_session.server_id)
+		return 0;
 	chatroom_index = find_chatroom_index(chatroom);
 	offset = 9 + chatroom_length;
 	for (i=0;i<5;i++)
