@@ -349,7 +349,6 @@ static void Read_message() {
 			exit(1);
 		}
 		if (Is_reg_memb_mess(service_type)) {
-			log_debug("handling membership change");
 			handle_membership_message(sender, num_groups, &memb_info, service_type);
 
 		} else if (Is_transition_mess(service_type)) {
@@ -618,7 +617,7 @@ static int handle_membership_message(char *sender, int num_groups, membership_in
 
 	char username[20];
 	int serverID;
-	log_debug("Handling membership change");
+	log_debug("Handling membership change %s", mem_info->changed_member);
 	sscanf(sender, "%s_%d", username, &serverID);
 	int ret = strcmp(username, current_session.username);
 	if (ret == 0)

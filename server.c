@@ -264,6 +264,7 @@ static void create_chatroom_from_logs()
 static int initialize() {
 	int ret, i;
 	int fds[5];
+	char server_group_name[10];
 	log_info("Server Initializing");
 	create_log_files(current_session.server_id, 5, RECREATE_FILES_IN_STARTUP, fds);
 	// for(i = 0; i < 5; i++)
@@ -281,6 +282,12 @@ static int initialize() {
 	ret = SP_join(Mbox, "chat_servers");
 	if (ret < 0)
 		SP_error(ret);
+	sprintf(server_group_name, "server%d", current_session.server_id);
+	log_info("joining our public group = %s", server_group_name);
+	ret = SP_join(Mbox, server_group_name);
+	if (ret < 0)
+		SP_error(ret);
+		
 	return 0;
 }
 
