@@ -12,8 +12,8 @@ all: client server
 client:  client.o log.o
 	$(LD) -o $@ client.o log.o -ldl $(SP_LIBRARY)
 
-server:  server.o log.o include/hashset/hashset.o include/hashset/hashset_itr.o fileService.o
-	$(LD) -o $@ server.o log.o include/hashset/hashset.o include/hashset/hashset_itr.o fileService.o -ldl $(SP_LIBRARY)
+server:  server.o log.o include/HashSet/src/hash_set.o fileService.o
+	$(LD) -o $@ server.o log.o include/HashSet/src/hash_set.o fileService.o -ldl $(SP_LIBRARY)
 
 
 clean:
