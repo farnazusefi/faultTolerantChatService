@@ -40,7 +40,7 @@ void parseLineInLogFile(char *line, logEvent *e);
 
 void addMessageToChatroomFile(u_int32_t me, char *chatroom, Message m);
 
-Message parseLineInMessagesFile(char *line, Message *m);
+void parseLineInMessagesFile(char *line, Message *m);
 
 void addLikerToMessage(char *chatroom, u_int32_t server_id, u_int32_t lamportCounter, char *userName);
 

@@ -57,3 +57,5 @@ dkms.conf
 *.chatroom
 .vscode/
 test
+client
+server

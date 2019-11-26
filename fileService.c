@@ -19,7 +19,7 @@ void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate, int 
         	log_files[i-1] = fopen(filename, "w+");
         else
         	log_files[i-1] = fopen(filename, "a+");
-        fds[i-1] = fileno(log_files[i-1]);
+        //fds[i-1] = fileno(log_files[i-1]);
     }
 
 }
@@ -68,7 +68,7 @@ void addMessageToChatroomFile(u_int32_t me, char *chatroom, Message m)
     fclose(f);
 }
 
-Message parseLineInMessagesFile(char *line, Message *m)
+void parseLineInMessagesFile(char *line, Message *m)
 {
     sscanf(line, "%d~%d~%[^\t\n~]~%[^\t\n~]~%s", &m->serverID, &m->lamportCounter, m->userName, m->message, m->additionalInfo);
 }
@@ -86,5 +86,5 @@ void removeLikerOfMessage(char *chatroom, u_int32_t server_id, u_int32_t lamport
 
 int get_last_messages(char * chatroom, Message* output, u_int32_t num_of_messages)
 {
-
+ return 0;
 }
