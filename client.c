@@ -551,7 +551,7 @@ static int handle_connect(int server_id) {
 static int join(char *chatroom) {
 	char chatroom_group_name[80];
 	int ret;
-	sprintf(chatroom_group_name, "#%s_%d", chatroom, current_session.connected_server);
+	sprintf(chatroom_group_name, "CHATROOM_%s_%d", chatroom, current_session.connected_server);
 	log_info("joining Spread group %s", chatroom_group_name);
 	ret = SP_join(Mbox, chatroom_group_name);
 	if (ret < 0)
@@ -618,14 +618,16 @@ static int handle_membership_message(char *sender, int num_groups, membership_in
 	char username[20];
 	int serverID;
 	log_debug("Handling membership change %s", mem_info->changed_member);
-	sscanf(sender, "%s_%d", username, &serverID);
+	sscanf(sender, "%[^_]_%d", username, &serverID);
 	int ret = strcmp(username, current_session.username);
+    log_debug("comparing group name %s with username ret = %d, service type = %d", username, ret, service_type);
 	if (ret == 0)
 	{
 		// this is the group between me and the server
 		if(Is_caused_leave_mess( service_type ) || Is_caused_disconnect_mess(service_type))
 		{
 			// server is disconnected
+            log_debug("caused leave or disconnect");
 			current_session.connected_server = 0;
 			current_session.is_connected = 0;
 			current_session.is_joined = 0;
