@@ -685,9 +685,13 @@ static int handle_update_response(char *message, int size, int num_groups) {
 	log_debug("Parsed number of messages %d", num_messages);
 	for (i = 0; i < num_messages; i++){
 		memcpy(&current_session.messages[i].serverID, message + offset + pointer, 4);
+        log_debug("server ID = %d", &current_session.messages[i].serverID);
 		memcpy(&current_session.messages[i].lamportCounter, message + offset + pointer + 4, 4);
+        log_debug("lamport = %d", &current_session.messages[i].lamportCounter);
 		memcpy(&messageSize, message + offset + pointer + 8, 4);
+        log_debug("m size = %d", messageSize);
 		memcpy(&current_session.messages[i].message, message + offset + pointer +12, messageSize);
+        current_session.messages[i].message[messageSize] = 0;
 		memcpy(&current_session.messages[i].numOfLikes, message + offset + pointer + 12 + messageSize, 4);
 		pointer += (16 + messageSize);
 	}
