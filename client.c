@@ -534,6 +534,7 @@ static int handle_connect(int server_id) {
 			if (ret < 0)
 				SP_error(ret);
 		}
+		current_session.connected_server = server_id;
 		sprintf(server_group_name, "%s_%d", current_session.username, current_session.connected_server);
 		log_info("requesting to join %d, group name = %s", server_id, server_group_name);
 		ret = SP_join(Mbox, server_group_name);
@@ -541,7 +542,6 @@ static int handle_connect(int server_id) {
 			SP_error(ret);
 
 		sendConnectionRequestToServer();
-		current_session.connected_server = server_id;
 		return 0;
 	}
 	log_warn("Already connected to server %d", server_id);
