@@ -59,18 +59,14 @@ static char Spread_name[80];
 
 static char Private_group[MAX_GROUP_NAME];
 static mailbox Mbox;
-static int Num_sent;
 
 static int To_exit = 0;
 static int log_level;
 
 //////////////////////////   Declarations    ////////////////////////////////////////////////////
 
-static void Print_menu();
-static void User_command();
 static void Read_message();
 static void Usage(int argc, char *argv[]);
-static void Print_help();
 static void Bye();
 
 static int initialize();
@@ -85,7 +81,7 @@ static int handle_membership_status();
 
 static int parse(char *message, int size, int num_groups);
 static int handle_server_update();
-static int handle_participant_update(char *message, int size);
+static int handle_participant_update(char *message, int msg_size);
 static int handle_anti_entropy();
 static int handle_membership_change();
 static void update_chatroom_data(int chatroom_index, char *chatroom, u_int32_t payload_length, char *payload);
@@ -178,7 +174,7 @@ static void Read_message() {
 			exit(1);
 		}
 		if (Is_reg_memb_mess(service_type)) {
-			handle_membership_message(num_groups, &target_groups, &memb_info);
+			handle_membership_change();
 
 		} else if (Is_transition_mess(service_type)) {
 			log_info("received TRANSITIONAL membership for group %s\n", sender);
@@ -355,6 +351,7 @@ static int send_chatroom_update_to_clients(char* chatroom, int index)
 	}
 	log_debug("sending client update for chatroom %s with %d participants and %d messages", chatroom, num_participants, current_session.chatrooms[index].numOf_messages);
 	SP_multicast(Mbox, AGREED_MESS, chatroomGroup, 2, offset + 5, message);
+	return 0;
 }
 
 static int handle_disconnect(char *username) {
@@ -517,14 +514,14 @@ static void update_chatroom_data(int chatroom_index, char *chatroom, u_int32_t p
 		if(current_session.chatrooms[chatroom_index].numOf_messages < 25)
 	{
 		log_debug("chatroom %s has %d message(s)", chatroom, current_session.chatrooms[chatroom_index].numOf_messages);
-		memcpy(current_session.chatrooms[chatroom_index].messages[current_session.chatrooms[chatroom_index].numOf_messages++], payload, payload_length);
+		memcpy(current_session.chatrooms[chatroom_index].messages[current_session.chatrooms[chatroom_index].numOf_messages++].message, payload, payload_length);
 	}
 	else
 	{
 		Message m = current_session.chatrooms[chatroom_index].messages[current_session.chatrooms[chatroom_index].message_start_pointer];
 		log_debug("moving message #%d, %d to file", m.serverID, m.lamportCounter);
-		addMessageToChatroomFile(current_session.server_id, Chatroom, m);
-		memcpy(current_session.chatrooms[chatroom_index].messages[current_session.chatrooms[chatroom_index].message_start_pointer], payload, payload_length);
+		addMessageToChatroomFile(current_session.server_id, chatroom, m);
+		memcpy(current_session.chatrooms[chatroom_index].messages[current_session.chatrooms[chatroom_index].message_start_pointer].message, payload, payload_length);
 		current_session.chatrooms[chatroom_index].message_start_pointer++;
 		if(current_session.chatrooms[chatroom_index].message_start_pointer == 25)
 			current_session.chatrooms[chatroom_index].message_start_pointer = 0;
@@ -548,7 +545,7 @@ static int handle_like_unlike(char *message, char event_type) {
 	if(chatroom_index == -1)
 	{
 		log_fatal("chatroom not found. This should not happen, right???????");
-		return;
+		return 0;
 	}
 	offset = username_length + chatroom_length + 9;
 	memcpy(&pid, message + offset, 4);
@@ -623,16 +620,15 @@ static int handle_membership_change() {
 	return 0;
 }
 
-static int handle_participant_update(char *message, int size) {
+static int handle_participant_update(char *message, int msg_size) {
 	u_int32_t server_id, num_of_participants;
 	u_int32_t chatroom_length, offset, uname_length;
-	u_int32_t size = 0;
 	
 	int chatroom_index, i, p, flag = 1;
 	char username[20], chatroom[20];
-	memcpy(&server_id, messsage + 1, 4);
-	memcpy(&chatroom_length, messsage + 5, 4);
-	memcpy(&chatroom, messsage + 9, chatroom_length);
+	memcpy(&server_id, message + 1, 4);
+	memcpy(&chatroom_length, message + 5, 4);
+	memcpy(&chatroom, message + 9, chatroom_length);
 	chatroom_index = find_chatroom_index(chatroom);
 	offset = 9 + chatroom_length;
 	for (i=0;i<5;i++)
