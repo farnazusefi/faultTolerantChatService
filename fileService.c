@@ -53,7 +53,9 @@ void refineLogFile(u_int32_t lc)
 
 void parseLineInLogFile(char *line, logEvent *e)
 {
-    sscanf(line, "%d~%[^\t\n~]~%c~%[^\t\n~]~%s", &e->lamportCounter, e->chatroom,  &e->eventType, e->payload, e->additionalInfo);
+    log_debug("line is %s", line);
+    sscanf(line, "%d~%[^\t\n~]~%c~%[^\n\t]", &e->lamportCounter, e->chatroom,  &e->eventType, e->payload);
+    log_debug("%d, %s, %c, %s", e->lamportCounter, e->chatroom,  e->eventType, e->payload);
 }
 
 void addMessageToChatroomFile(u_int32_t me, char *chatroom, Message m)

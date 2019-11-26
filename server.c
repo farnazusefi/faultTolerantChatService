@@ -313,13 +313,13 @@ static int send_to_servers(char type, char *payload, u_int32_t size)
 
 static int aggregate_participants(hash_set_st *agg, int index)
 {
-	int i, j, count;
+	int i, j, count = 0;
 	hash_set_it *it;
 	char *username;
 	for(i = 0;i<5;i++)
 	{
 		it = it_init(&current_session.chatrooms[index].participants[i]);
-		for(j = 0; j < &current_session.chatrooms[index].num_of_participants[i];j++)
+		for(j = 0; j < current_session.chatrooms[index].num_of_participants[i];j++)
 		{
 			username = (char *)it_value(it);
 			hash_set_insert(agg, username, strlen(username));
@@ -415,8 +415,8 @@ static int create_new_chatroom(char *chatroom)
 	current_session.chatrooms[index].numOf_messages = 0;
 	current_session.chatrooms[index].message_start_pointer = 0;
 	for(i = 0; i < 5; i++){
-		current_session.chatrooms[index].participants[i] = hash_set_init(chksum);
-		current_session.chatrooms[index].num_of_participants = 0;
+		current_session.chatrooms[index].participants[i] = *hash_set_init(chksum);
+		current_session.chatrooms[index].num_of_participants[i] = 0;
 	}
 	create_chatroom_file(current_session.server_id, chatroom, RECREATE_FILES_IN_STARTUP);
 	return index;
@@ -460,6 +460,8 @@ static int handle_join(char *message, int size) {
 	memcpy(username, message + 5, username_length);
 	memcpy(&chatroom_length, message + 5 + username_length, 4);
 	memcpy(chatroom, message + 9 + username_length, chatroom_length);
+    chatroom[chatroom_length] = 0;
+    username[username_length] = 0;
 	log_debug("Handling client join request username = %s, chatroom length = %d, chatroom = %s", username, chatroom_length, chatroom);
 	chatroom_index = find_chatroom_index(chatroom);
 	if(chatroom_index == -1)
@@ -496,10 +498,13 @@ static int handle_append(char *message, int msg_size) {
 	char username[20], chatroom[20], payload[80];
 	int chatroom_index;
 	logEvent e;
+    memset(&e, 0, sizeof(e));
 	memcpy(&username_length, message +1, 4);
 	memcpy(username, message + 5, username_length);
 	memcpy(&chatroom_length, message + 5 + username_length, 4);
 	memcpy(chatroom, message + 9 + username_length, chatroom_length);
+    chatroom[chatroom_length] = 0;
+    username[username_length] = 0;
 	log_debug("handling append message from %s in chatroom %s", username, chatroom);
 
 	chatroom_index = find_chatroom_index(chatroom);
@@ -511,6 +516,7 @@ static int handle_append(char *message, int msg_size) {
 	offset = username_length + chatroom_length + 9;
 	memcpy(&payload_length, message + offset, 4);
 	memcpy(payload, message + offset + 4, payload_length);
+    payload[payload_length] = 0;
 	e.eventType = TYPE_APPEND;
 	e.lamportCounter = ++current_session.lamport_counter;
 	char line[100];
@@ -614,8 +620,8 @@ static int handle_server_update(char *messsage, int size) {
 	switch(e.eventType)
 	{
 		case TYPE_APPEND:
-			sscanf(e.payload, "%s~%s", username, message_text);
-			log_debug("parsing append data from message. username = %s, message text = %s, chatroom = %s", username, message_text, e.chatroom);
+			sscanf(e.payload, "%[^\n\t~]~%[^\n\t]", username, message_text);
+			log_debug("parsing append data {%s} from message. username = %s, message text = %s, chatroom = %s", e.payload, username, message_text, e.chatroom);
 			update_chatroom_data(chatroom_index, e.chatroom, strlen(message_text), message_text);
 			break;
 		case TYPE_LIKE:
@@ -674,5 +680,5 @@ static int handle_participant_update(char *message, int msg_size) {
 			}
 		}
 	}
-
+    return 0;
 }

@@ -43,7 +43,7 @@ typedef struct Session_t {
 	Message messages[25];
 	u_int32_t numOfMessages;
 
-	char *listOfParticipants[MAX_PARTICIPANTS];
+	char listOfParticipants[MAX_PARTICIPANTS][20];
 	u_int32_t numOfParticipants;
 
 } Session;
@@ -294,8 +294,7 @@ static void Print_menu() {
 	printf("\tc <server index [1-5]> -- connect to server [1-5]\n");
 	printf("\tj <chatroom> -- join a chatroom\n");
 	printf("\n");
-	printf("\ta -- send a message to chatroom\n");
-	printf("\tm <group> -- send a multiline message to group. Terminate with empty line\n");
+	printf("\ta -- send a message to chatroom\n");	
 	printf("\tl <line number> -- like a message\n");
 	printf("\tr <line number> -- un-like a message\n");
 	printf("\n");
@@ -425,9 +424,9 @@ static int initialize() {
 	current_session.is_connected = 0;
 	current_session.numOfMessages = 0;
 	int i;
-	for (i = 0; i < MAX_PARTICIPANTS; i++){
-		current_session.listOfParticipants [i] = (char*) malloc(20);
-	}
+	//for (i = 0; i < MAX_PARTICIPANTS; i++){
+	//	current_session.listOfParticipants [i] = (char*) calloc(20, 1);
+	//}
 	log_debug("list of participants initialized");
 	return 0;
 }
@@ -531,6 +530,7 @@ static int handle_connect(int server_id) {
 			log_info("disconnecting from %d", current_session.connected_server);
 			sprintf(server_group_name, "%s_%d", current_session.username, current_session.connected_server);
 			ret = SP_leave(Mbox, server_group_name);
+            current_session.is_joined = 0;
 			if (ret < 0)
 				SP_error(ret);
 		}
@@ -558,6 +558,7 @@ static int join(char *chatroom) {
 		SP_error(ret);
 	sendJoinRequestToServer(chatroom);
 	memcpy(current_session.chatroom, chatroom, strlen(chatroom));
+    current_session.is_joined = 1;
 	return 0;
 }
 
@@ -649,6 +650,7 @@ static void displayMessages(){
 	printf("room: %s\n", current_session.chatroom);
 	printf("currentParticipants: ");
 	int i;
+    log_debug("In display messages: %d - %s", current_session.numOfParticipants, current_session.listOfParticipants[0]);
 	for (i=0; i< current_session.numOfParticipants; i++){
 		printf("%s,",current_session.listOfParticipants[i]);
 	}
@@ -672,17 +674,21 @@ static int handle_update_response(char *message, int size, int num_groups) {
 	log_debug("Parsed number of participants %d", current_session.numOfParticipants);
 	for (i = 0; i < current_session.numOfParticipants; i++) {
 		memcpy(&username_size, message + offset, 4);
+        log_debug("username size is %d", username_size);
 		memcpy(&current_session.listOfParticipants[i], message + offset + 4, username_size);
+        current_session.listOfParticipants[i][username_size] = 0;
+        log_debug("added %s to list of participants", current_session.listOfParticipants[i]);
 		offset += (4+username_size);
 	}
-	memcpy(&num_messages, message + offset + (4 * current_session.numOfParticipants), 4);
+	memcpy(&num_messages, message + offset, 4);
+    offset +=4;
 	log_debug("Parsed number of messages %d", num_messages);
 	for (i = 0; i < num_messages; i++){
 		memcpy(&current_session.messages[i].serverID, message + offset + pointer, 4);
 		memcpy(&current_session.messages[i].lamportCounter, message + offset + pointer + 4, 4);
 		memcpy(&messageSize, message + offset + pointer + 8, 4);
 		memcpy(&current_session.messages[i].message, message + offset + pointer +12, messageSize);
-		memcpy(&current_session.messages[i].numOfLikes, message + offset + pointer + 16 + messageSize, 4);
+		memcpy(&current_session.messages[i].numOfLikes, message + offset + pointer + 12 + messageSize, 4);
 		pointer += (16 + messageSize);
 	}
 	current_session.numOfMessages = num_messages;
