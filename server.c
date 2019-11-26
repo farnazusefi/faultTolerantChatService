@@ -188,16 +188,13 @@ static void Read_message() {
 	} else
 		log_error("received message of unknown message type 0x%x with ret %d\n", service_type, ret);
 
-	printf("\n");
-	printf("User> ");
-	fflush(stdout);
 }
 
 static void Usage(int argc, char *argv[]) {
 	sprintf(User, "user");
-	sprintf(Spread_name, "225.1.3.30:10330");
-	if (argc != 2 || argc != 3) {
-		printf("Usage: ./server [server_id 1-5] [log_level]");
+	sprintf(Spread_name, "10330");
+	if (argc != 2 && argc != 3) {
+		printf("Usage: ./server [server_id 1-5] [log_level]\n");
 		exit(0);
 	}
 	if(argc == 3)

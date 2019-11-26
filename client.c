@@ -372,7 +372,7 @@ static void Read_message() {
 static void Usage(int argc, char *argv[]) {
 	char debug_level_str[10];
 	sprintf(User, "user");
-	sprintf(Spread_name, "225.1.3.30:10330");
+	sprintf(Spread_name, "10330");
 	while (--argc > 0) {
 		argv++;
 
@@ -535,7 +535,8 @@ static int handle_connect(int server_id) {
 			if (ret < 0)
 				SP_error(ret);
 		}
-		log_info("requesting to join %d", server_id);
+		sprintf(server_group_name, "%s_%d", current_session.username, current_session.connected_server);
+		log_info("requesting to join %d, group name = %s", server_id, server_group_name);
 		ret = SP_join(Mbox, server_group_name);
 		if (ret < 0)
 			SP_error(ret);
