@@ -557,6 +557,7 @@ static int join(char *chatroom) {
 	if (ret < 0)
 		SP_error(ret);
 	sendJoinRequestToServer(chatroom);
+	memcpy(current_session.chatroom, chatroom, strlen(chatroom));
 	return 0;
 }
 

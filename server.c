@@ -287,7 +287,7 @@ static int initialize() {
 	ret = SP_join(Mbox, server_group_name);
 	if (ret < 0)
 		SP_error(ret);
-		
+
 	return 0;
 }
 
