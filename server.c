@@ -536,7 +536,7 @@ static int handle_append(char *message, int msg_size) {
 }
 
 static void update_chatroom_data(int chatroom_index, char *chatroom, u_int32_t payload_length, char *payload){
-		if(current_session.chatrooms[chatroom_index].numOf_messages < 25)
+	if(current_session.chatrooms[chatroom_index].numOf_messages < 25)
 	{
 		log_debug("chatroom %s has %d message(s)", chatroom, current_session.chatrooms[chatroom_index].numOf_messages);
 		memcpy(current_session.chatrooms[chatroom_index].messages[current_session.chatrooms[chatroom_index].numOf_messages++].message, payload, payload_length);
@@ -611,6 +611,8 @@ static int handle_server_update(char *messsage, int size) {
 	memcpy(&sender_id, messsage + 1, 4);
 	memcpy(&server_id, messsage + 5, 4);
 	memcpy(&log_length, messsage + 9, 4);
+	if(server_id == current_session.server_id)
+		return 0;
 	char line[log_length];
 	memcpy(&line, messsage + 13, log_length);
 	log_debug("handling server update (of server %d) from server %d. update line is: %s", server_id, sender_id, line);
