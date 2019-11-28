@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include "log.h"
-#include "include/hashset/hashset.h"
 
 typedef struct {
 	u_int32_t lamportCounter;
@@ -21,7 +20,7 @@ typedef struct {
 	char message[80];
 	char additionalInfo[200];
 	u_int32_t numOfLikes;
-	hashset_t likers;
+	//hashset_t likers;
 } Message;
 
 FILE ** log_files; 

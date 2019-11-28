@@ -423,10 +423,6 @@ static int initialize() {
 	current_session.connected_server = 0;
 	current_session.is_connected = 0;
 	current_session.numOfMessages = 0;
-	int i;
-	//for (i = 0; i < MAX_PARTICIPANTS; i++){
-	//	current_session.listOfParticipants [i] = (char*) calloc(20, 1);
-	//}
 	log_debug("list of participants initialized");
 	return 0;
 }
@@ -688,12 +684,18 @@ static int handle_update_response(char *message, int size, int num_groups) {
         log_debug("server ID = %d", &current_session.messages[i].serverID);
 		memcpy(&current_session.messages[i].lamportCounter, message + offset + pointer + 4, 4);
         log_debug("lamport = %d", &current_session.messages[i].lamportCounter);
-		memcpy(&messageSize, message + offset + pointer + 8, 4);
+      
+        memcpy(&username_size, message + offset + pointer + 8, 4); 
+        memcpy(current_session.messages[i].userName, message + offset + pointer + 12, username_size);
+        current_session.messages[i].userName[username_size] = 0;
+        log_debug("message uname is %s", current_session.messages[i].userName);
+        pointer += (12 + username_size);
+		memcpy(&messageSize, message + offset + pointer, 4);
         log_debug("m size = %d", messageSize);
-		memcpy(&current_session.messages[i].message, message + offset + pointer +12, messageSize);
+		memcpy(&current_session.messages[i].message, message + offset + pointer +4, messageSize);
         current_session.messages[i].message[messageSize] = 0;
-		memcpy(&current_session.messages[i].numOfLikes, message + offset + pointer + 12 + messageSize, 4);
-		pointer += (16 + messageSize);
+		memcpy(&current_session.messages[i].numOfLikes, message + offset + pointer + 4 + messageSize, 4);
+		pointer += (8 + messageSize);
 	}
 	current_session.numOfMessages = num_messages;
 	displayMessages();

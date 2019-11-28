@@ -71,7 +71,7 @@ static void Bye();
 
 static int initialize();
 
-static int handle_disconnect(char *username);
+//static int handle_disconnect(char *username);
 static int handle_connect(char *message, u_int32_t size);
 static int handle_join(char *message, int size);
 static int handle_append(char *message, int msg_size);
@@ -84,7 +84,7 @@ static int handle_server_update();
 static int handle_participant_update(char *message, int msg_size);
 static int handle_anti_entropy();
 static int handle_membership_change();
-static void update_chatroom_data(int chatroom_index, char *chatroom, u_int32_t payload_length, char *payload, logEvent e, u_int32_t serverID);
+static void update_chatroom_data(int chatroom_index, char *chatroom, char *username, u_int32_t payload_length, char *payload, logEvent e, u_int32_t serverID);
 
 ////////////////////////// Utility ////////////////////////////////////////
 
@@ -324,6 +324,7 @@ static int aggregate_participants(hash_set_st *agg, int index)
 			username = (char *)it_value(it);
 			hash_set_insert(agg, username, strlen(username));
 			count ++;
+            it_next(it);
 		}
 	}
 	log_debug("Aggregated participants for chatroom index %d - total participants = %d", index, count);
@@ -338,7 +339,7 @@ static int send_chatroom_update_to_clients(char* chatroom, int index)
 	char *username;
   	hash_set_st *participants = hash_set_init(chksum);
 	hash_set_it *it;
-	u_int32_t num_participants;
+	u_int32_t num_participants, username_size;
 	int offset = 5;
 	message[0] = TYPE_CLIENT_UPDATE;
 	sprintf(chatroomGroup, "CHATROOM_%s_%d", chatroom, current_session.server_id);
@@ -352,6 +353,7 @@ static int send_chatroom_update_to_clients(char* chatroom, int index)
 		memcpy(message + offset, &uname_size, 4);
 		memcpy(message + offset + 4, username, uname_size);
 		offset += (4 + uname_size);
+        it_next(it);
 	}
 
 	memcpy(message + offset, &current_session.chatrooms[index].numOf_messages, 4);
@@ -363,23 +365,30 @@ static int send_chatroom_update_to_clients(char* chatroom, int index)
         log_debug("message size is %d", message_size);
 		memcpy(message + offset, &current_session.chatrooms[index].messages[i].serverID, 4);
         memcpy(message + offset+4, &current_session.chatrooms[index].messages[i].lamportCounter, 4);
-        memcpy(message + offset+8, &message_size, 4);
-		memcpy(message + offset + 12, current_session.chatrooms[index].messages[i].message, message_size);
+    //
+        username_size = strlen(current_session.chatrooms[index].messages[i].userName);
+        memcpy(message + offset + 8, &username_size, 4);
+        memcpy(message + offset + 12, &current_session.chatrooms[index].messages[i].userName, username_size);
+        current_session.chatrooms[index].messages[i].userName[username_size] = 0;
+    //
+        offset += (12 + username_size);
+        memcpy(message + offset, &message_size, 4);
+		memcpy(message + offset + 4, current_session.chatrooms[index].messages[i].message, message_size);
         log_debug("message is %s", current_session.chatrooms[index].messages[i].message);
-		memcpy(message + offset + 12 + message_size, &current_session.chatrooms[index].messages[i].numOfLikes, 4);
+		memcpy(message + offset + 4 + message_size, &current_session.chatrooms[index].messages[i].numOfLikes, 4);
         log_debug("num of likes is %s", current_session.chatrooms[index].messages[i].numOfLikes);
-		offset += (16 + message_size);
+		offset += (8 + message_size);
 	}
 	log_debug("sending client update for chatroom %s with %d participants and %d messages", chatroom, num_participants, current_session.chatrooms[index].numOf_messages);
 	SP_multicast(Mbox, AGREED_MESS, chatroomGroup, 2, offset + 5, message);
 	return 0;
 }
 
-static int handle_disconnect(char *username) {
-	log_warn("handling disconnect by doing nothing");
+//static int handle_disconnect(char *username) {
+//	log_warn("handling disconnect by doing nothing");
 	// TODO: ?
-	return 0;
-}
+//	return 0;
+//}
 
 static int handle_connect(char *message, u_int32_t size) {
 	u_int32_t username_size;
@@ -430,7 +439,7 @@ static int create_new_chatroom(char *chatroom)
 static int send_participant_change_to_servers(char *chatroom, char *username, int index)
 {
 	char payload[1300];
-	u_int32_t offset, nop, uname_size;
+	u_int32_t offset, nop;
 	u_int32_t chatroom_length = strlen(chatroom);
 	hash_set_it *it;
 	memcpy(payload, &chatroom_length, 4);
@@ -451,6 +460,7 @@ static int send_participant_change_to_servers(char *chatroom, char *username, in
 			memcpy(payload + offset, &uname_size, 4);
 			memcpy(payload + offset + 4, username, uname_size);
 			offset += (4 + uname_size);
+            it_next(it);
 		}
 	}
 	send_to_servers(TYPE_PARTICIPANT_UPDATE, payload, offset + 4 + chatroom_length);
@@ -535,35 +545,36 @@ static int handle_append(char *message, int msg_size) {
 	addEventToLogFile(current_session.server_id, buffer);
 	send_log_update_to_servers(current_session.server_id, strlen(buffer), buffer);
 
-	update_chatroom_data(chatroom_index, chatroom, payload_length, payload, e, current_session.server_id);
+	update_chatroom_data(chatroom_index, chatroom, username, payload_length, payload, e, current_session.server_id);
 	
 	return 0;
 }
 
-static void update_chatroom_data(int chatroom_index, char *chatroom, u_int32_t payload_length, char *payload, logEvent e, u_int32_t serverID){
+static void update_chatroom_data(int chatroom_index, char *chatroom, char *username, u_int32_t payload_length, char *payload, logEvent e, u_int32_t serverID){
+    u_int32_t msg_pointer;
 	if(current_session.chatrooms[chatroom_index].numOf_messages < 25)
 	{
-		u_int32_t msg_pointer = current_session.chatrooms[chatroom_index].numOf_messages;
+	    msg_pointer = current_session.chatrooms[chatroom_index].numOf_messages;
         log_debug("chatroom %s has %d message(s)", chatroom, msg_pointer);
-		memcpy(current_session.chatrooms[chatroom_index].messages[current_session.chatrooms[chatroom_index].numOf_messages++].message, payload, payload_length);
-        current_session.chatrooms[chatroom_index].messages[msg_pointer].numOfLikes = 0;
-        current_session.chatrooms[chatroom_index].messages[msg_pointer].lamportCounter = e.lamportCounter;
-        current_session.chatrooms[chatroom_index].messages[msg_pointer].serverID = serverID;
 	}
 	else
 	{
-        u_int32_t msg_pointer = current_session.chatrooms[chatroom_index].message_start_pointer;
+        msg_pointer = current_session.chatrooms[chatroom_index].message_start_pointer;
 		Message m = current_session.chatrooms[chatroom_index].messages[current_session.chatrooms[chatroom_index].message_start_pointer];
 		log_debug("moving message #%d, %d to file", m.serverID, m.lamportCounter);
 		addMessageToChatroomFile(current_session.server_id, chatroom, m);
-		memcpy(current_session.chatrooms[chatroom_index].messages[current_session.chatrooms[chatroom_index].message_start_pointer].message, payload, payload_length);
-        current_session.chatrooms[chatroom_index].messages[msg_pointer].numOfLikes = 0;
-        current_session.chatrooms[chatroom_index].messages[msg_pointer].lamportCounter = e.lamportCounter;
-        current_session.chatrooms[chatroom_index].messages[msg_pointer].serverID = serverID;
-		current_session.chatrooms[chatroom_index].message_start_pointer++;
-		if(current_session.chatrooms[chatroom_index].message_start_pointer == 25)
-			current_session.chatrooms[chatroom_index].message_start_pointer = 0;
 	}
+    memcpy(current_session.chatrooms[chatroom_index].messages[msg_pointer].message, payload, payload_length);
+    memcpy(current_session.chatrooms[chatroom_index].messages[msg_pointer].userName, username, strlen(username));
+    current_session.chatrooms[chatroom_index].messages[msg_pointer].userName[strlen(username)] = 0;
+
+    current_session.chatrooms[chatroom_index].messages[msg_pointer].numOfLikes = 0;
+    current_session.chatrooms[chatroom_index].messages[msg_pointer].lamportCounter = e.lamportCounter;
+    current_session.chatrooms[chatroom_index].messages[msg_pointer].serverID = serverID;
+    current_session.chatrooms[chatroom_index].numOf_messages++;
+    if(current_session.chatrooms[chatroom_index].message_start_pointer == 25){
+        current_session.chatrooms[chatroom_index].message_start_pointer = 0;
+    }
 	send_chatroom_update_to_clients(chatroom, chatroom_index);
 }
 
@@ -580,6 +591,8 @@ static int handle_like_unlike(char *message, char event_type) {
 	memcpy(username, message + 5, username_length);
 	memcpy(&chatroom_length, message + 5 + username_length, 4);
 	memcpy(chatroom, message + 9 + username_length, chatroom_length);
+    username[username_length] = 0;
+    chatroom[chatroom_length] = 0;
 	chatroom_index = find_chatroom_index(chatroom);
 	if(chatroom_index == -1)
 	{
@@ -638,7 +651,7 @@ static int handle_server_update(char *messsage, int size) {
 		case TYPE_APPEND:
 			sscanf(e.payload, "%[^\n\t~]~%[^\n\t]", username, message_text);
 			log_debug("parsing append data {%s} from message. username = %s, message text = %s, chatroom = %s", e.payload, username, message_text, e.chatroom);
-			update_chatroom_data(chatroom_index, e.chatroom, strlen(message_text), message_text, e, server_id);
+			update_chatroom_data(chatroom_index, e.chatroom, username, strlen(message_text), message_text, e, server_id);
 			break;
 		case TYPE_LIKE:
 			break;
@@ -670,6 +683,7 @@ static int handle_participant_update(char *message, int msg_size) {
 	memcpy(&server_id, message + 1, 4);
 	memcpy(&chatroom_length, message + 5, 4);
 	memcpy(&chatroom, message + 9, chatroom_length);
+    chatroom[chatroom_length] = 0;
     if(server_id == current_session.server_id)
 		return 0;
 	chatroom_index = find_chatroom_index(chatroom);
@@ -681,7 +695,7 @@ static int handle_participant_update(char *message, int msg_size) {
 	offset = 9 + chatroom_length;
 	for (i=0;i<5;i++)
 	{
-		if(i != server_id && current_session.membership[i])
+		if(i != server_id-1 && current_session.membership[i])
 			flag = 0;
 		else{
 			flag = 1;
@@ -689,11 +703,14 @@ static int handle_participant_update(char *message, int msg_size) {
 			current_session.chatrooms[chatroom_index].num_of_participants[i] = 0;
 		}
 		memcpy(&num_of_participants, message + offset, 4);
+        log_debug("num of participants %d is %d", i+1, num_of_participants);
 		offset += 4;
 		for(p = 0;p < num_of_participants; p++)
 		{
 			memcpy(&uname_length, message + offset, 4);
 			memcpy(username, message + offset + 4, uname_length);
+            username[uname_length] = 0;
+            log_debug("parsing user name %s for server %d list of p, will be added? %d", username, i+1, flag);
 			offset += (4 + uname_length);
 			if(flag){
 				hash_set_insert(&current_session.chatrooms[chatroom_index].participants[i], username, strlen(username));
@@ -701,5 +718,6 @@ static int handle_participant_update(char *message, int msg_size) {
 			}
 		}
 	}
+    send_chatroom_update_to_clients(chatroom, chatroom_index);
     return 0;
 }
