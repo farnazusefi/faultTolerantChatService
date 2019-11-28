@@ -673,6 +673,11 @@ static int handle_participant_update(char *message, int msg_size) {
     if(server_id == current_session.server_id)
 		return 0;
 	chatroom_index = find_chatroom_index(chatroom);
+	if(chatroom_index == -1)
+	{
+		// I don't have the chatroom. Let's create it:
+		chatroom_index = create_new_chatroom(chatroom);
+	}
 	offset = 9 + chatroom_length;
 	for (i=0;i<5;i++)
 	{
