@@ -547,6 +547,14 @@ static int handle_connect(int server_id) {
 static int join(char *chatroom) {
 	char chatroom_group_name[80];
 	int ret;
+    if(current_session.is_joined)
+    {
+        sprintf(chatroom_group_name, "CHATROOM_%s_%d", current_session.chatroom, current_session.connected_server);
+        log_debug("leaving Spread group %s", chatroom_group_name);
+        ret = SP_leave(Mbox, chatroom_group_name);
+        if (ret < 0)
+            SP_error(ret);
+    }
 	sprintf(chatroom_group_name, "CHATROOM_%s_%d", chatroom, current_session.connected_server);
 	log_info("joining Spread group %s", chatroom_group_name);
 	ret = SP_join(Mbox, chatroom_group_name);

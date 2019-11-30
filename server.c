@@ -110,7 +110,7 @@ int hash_set_remove(hash_set_st* old_hashset, u_int32_t chatroom_index, u_int32_
 	hash_set_it *it;
 	int j, count = 0;
 	char *value;
-	hash_set_st *temp;
+	hash_set_st *temp = hash_set_init(chksum);
 	it = it_init(old_hashset);
 	u_int32_t length = current_session.chatrooms[chatroom_index].num_of_participants[server_index];
 	for(j = 0; j < length;j++)
@@ -214,7 +214,10 @@ static void Read_message() {
 			exit(1);
 		}
 		if (Is_reg_memb_mess(service_type)) {
-			handle_membership_change();
+            int join = 0;
+            if(Is_caused_join_mess( service_type ))
+                join = 1;
+			handle_membership_change(target_groups, num_groups, join, memb_info.changed_member, sender);
 
 		} else if (Is_transition_mess(service_type)) {
 			log_info("received TRANSITIONAL membership for group %s\n", sender);
@@ -231,7 +234,6 @@ static void Read_message() {
 }
 
 static void Usage(int argc, char *argv[]) {
-	sprintf(User, "user");
 	sprintf(Spread_name, "10330");
 	if (argc != 2 && argc != 3) {
 		printf("Usage: ./server [server_id 1-5] [log_level]\n");
@@ -242,6 +244,7 @@ static void Usage(int argc, char *argv[]) {
 		log_level = atoi(argv[2]);
 		log_set_level(log_level);
 	}
+    sprintf(User, "%s", argv[1]);
 	current_session.server_id = atoi(argv[1]);
 }
 
@@ -433,17 +436,18 @@ static int handle_connect(char *message, u_int32_t size) {
 	char group_name[30];
 	memcpy(&username_size, message +1, 4);
 	memcpy(username, message + 5, username_size);
+    username[username_size] = 0;
 	sprintf(group_name, "%s_%d", username, current_session.server_id);
 	log_info("Handling client connection %s by joining %s", username, group_name);
 	ret = SP_join(Mbox, group_name);
 	if (ret < 0)
 		SP_error(ret);
 	current_session.connected_clients++;	// TODO: not if the client is already connected
-	chatroom_id = (u_int32_t *) malloc(sizeof(u_int32_t));
-	*chatroom_id = -1;
-	ret = hashmap_put(current_session.clients, username, chatroom_id);
-	if(ret!=MAP_OK)
-		log_error("Error in adding client to my map");
+	//chatroom_id = (int32_t *) malloc(sizeof(int32_t));
+	//*chatroom_id = -1;
+	//ret = hashmap_put(current_session.clients, username, chatroom_id);
+	//if(ret!=MAP_OK)
+	//	log_error("Error in adding client to my map");
 	return 0;
 }
 
@@ -512,33 +516,42 @@ static int handle_join(char *message, int size) {
 	u_int32_t username_length, chatroom_length;
 	char username[20], chatroom[20];
 	int32_t chatroom_index, ret;
-	u_int32_t *old_idx;
+	int32_t *old_idx = (int32_t*) malloc(sizeof(int32_t));
 	memcpy(&username_length, message +1, 4);
 	memcpy(username, message + 5, username_length);
 	memcpy(&chatroom_length, message + 5 + username_length, 4);
 	memcpy(chatroom, message + 9 + username_length, chatroom_length);
     chatroom[chatroom_length] = 0;
     username[username_length] = 0;
-	log_debug("Handling client join request username = %s, chatroom length = %d, chatroom = %s", username, chatroom_length, chatroom);
+	log_debug("Handling client join request username = %s, chatroom length = %d, chatroom = %s, old chatroom = %d", username, chatroom_length, chatroom, *old_idx) ;
 	ret = hashmap_get(current_session.clients, username, (void**)(&old_idx));
-	if(ret!=MAP_OK)
-		log_error("Error in getting client from my map");
-	if(*old_idx != -1)
-	{
+	if(ret==MAP_OK)
+    {
+	
 		log_debug("client was previously in chatroom index %d", *old_idx);
 		hash_set_remove(&current_session.chatrooms[*old_idx].participants[current_session.server_id-1], *old_idx, current_session.server_id-1, username);
 		send_participant_change_to_servers(current_session.chatrooms[*old_idx].name, username, *old_idx);
 		send_chatroom_update_to_clients(current_session.chatrooms[*old_idx].name, *old_idx);
 	}
-
+    else{
+        free(old_idx);
+        old_idx = (int32_t*) malloc(sizeof(int32_t));
+    }
 	chatroom_index = find_chatroom_index(chatroom);
 	if(chatroom_index == -1)
 		chatroom_index = create_new_chatroom(chatroom);
 
-	*old_idx = chatroom_index;
 	hash_set_insert(&current_session.chatrooms[chatroom_index].participants[current_session.server_id-1], username, strlen(username));
 	current_session.chatrooms[chatroom_index].num_of_participants[current_session.server_id-1]++;
-	send_participant_change_to_servers(chatroom, username, &chatroom_index);
+    log_warn("1111");
+    *old_idx = chatroom_index;
+    log_warn("22222");
+    ret = hashmap_put(current_session.clients, username, old_idx);
+
+    if(ret!=MAP_OK)
+        log_error("Error in putting client to my map");
+
+	send_participant_change_to_servers(chatroom, username, chatroom_index);
 	send_chatroom_update_to_clients(chatroom, chatroom_index);
 	return 0;
 }
@@ -724,8 +737,47 @@ static int handle_anti_entropy() {
 	return 0;
 }
 
-static int handle_membership_change() {
-
+static int handle_membership_change(char **target_groups, int num_groups, int is_joined, char* target_member, char* target_group) {
+    u_int32_t server_id;
+    char client[20];
+    char garbage[20];
+    int ret;
+    int32_t *idx = (int32_t*) malloc(sizeof(int32_t));
+    if(!strncmp(target_group, "chat_servers", 12))
+    {
+        if(is_joined)
+        {
+            sscanf(target_member + 1, "%d%s", &server_id, garbage); 
+            log_debug("Server %s with id %d  joined the membership with %d members ", target_member, server_id, num_groups);
+        }
+        else
+        {
+            sscanf(target_member + 1, "%d%s", &server_id, garbage);
+            log_debug("Server %s with id %d left the membership with %d members", target_member, server_id, num_groups);
+        }
+    }
+    else if(!strncmp(target_group, "server", 6))
+        log_debug("It is me joining my group!");
+    else
+    {
+        log_debug("client membership event: target group %s, target_member %s, joined = %d", target_group, target_member, is_joined);
+        sscanf (target_group, "%[^_]_%d",client,  &server_id);
+        client[strlen(client)] = 0;
+        log_debug("client is: %s with size: %d", client, strlen(client)); 
+        if (!is_joined){
+            log_debug("map length is %d", hashmap_length(current_session.clients));
+//            hashmap_iterate(i);
+            ret = hashmap_get(current_session.clients, "erfan", (void**)(&idx));
+            log_warn("%d", ret);
+            ret = hashmap_get(current_session.clients, client, (void**)(&idx));
+    	    if(ret==MAP_OK){
+                log_debug("My client %s left", client);
+       		    hash_set_remove(&current_session.chatrooms[*idx].participants[current_session.server_id-1], *idx, current_session.server_id-1, client);
+           		send_participant_change_to_servers(current_session.chatrooms[*idx].name, client, *idx);
+	        	send_chatroom_update_to_clients(current_session.chatrooms[*idx].name, *idx);
+            }
+        }
+    }
 	return 0;
 }
 

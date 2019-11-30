@@ -301,7 +301,13 @@ int hashmap_get(map_t in, char* key, any_t *arg){
 	for(i = 0; i<MAX_CHAIN_LENGTH; i++){
 
         int in_use = m->data[curr].in_use;
+        printf("in use %d\n", in_use);
+        fflush(stdout);
         if (in_use == 1){
+
+            printf("keys %s --- %s\n", m->data[curr].key,key);
+            fflush(stdout);
+
             if (strcmp(m->data[curr].key,key)==0){
                 *arg = (m->data[curr].data);
                 return MAP_OK;
@@ -352,7 +358,9 @@ int hashmap_remove(map_t in, char* key){
 	int i;
 	int curr;
 	hashmap_map* m;
-
+    // =e
+    printf("calling hashmap remove\n");
+    //
 	/* Cast the hashmap */
 	m = (hashmap_map *) in;
 
