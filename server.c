@@ -514,9 +514,11 @@ static int send_participant_change_to_servers(char *chatroom, char *username, in
 
 static int handle_join(char *message, int size) {
 	u_int32_t username_length, chatroom_length;
-	char username[20], chatroom[20];
+	char chatroom[20];
+	char *username;
 	int32_t chatroom_index, ret;
 	int32_t *old_idx = (int32_t*) malloc(sizeof(int32_t));
+	username = (char *) calloc(20, 1);
 	memcpy(&username_length, message +1, 4);
 	memcpy(username, message + 5, username_length);
 	memcpy(&chatroom_length, message + 5 + username_length, 4);
