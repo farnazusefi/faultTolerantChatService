@@ -518,8 +518,21 @@ static int handle_login(char *username) {
 	return 0;
 }
 
+static void server_connect_timeout(int code, void *data)
+{
+	int ret;
+	char server_group_name[80];
+	log_warn("Server %d Connection Failed. Try again with another server", current_session.connected_server);
+	sprintf(server_group_name, "%s_%d", current_session.username, current_session.connected_server);
+	ret = SP_leave(Mbox, server_group_name);
+	if (ret < 0)
+		SP_error(ret);
+	current_session.connected_server = 0;
+}
+
 static int handle_connect(int server_id) {
 	int ret;
+	sp_time timeout;
 	char server_group_name[80];
 	if (server_id != current_session.connected_server || !current_session.is_connected) {
 		if (current_session.is_connected) {
@@ -538,6 +551,9 @@ static int handle_connect(int server_id) {
 			SP_error(ret);
 
 		sendConnectionRequestToServer();
+		timeout.sec = 3;
+    	E_queue( server_connect_timeout, 0, NULL, timeout );
+
 		return 0;
 	}
 	log_warn("Already connected to server %d", server_id);
@@ -620,8 +636,8 @@ static void display_disconnection_to_user()
 }
 
 static int handle_membership_message(char *sender, int num_groups, membership_info *mem_info, int service_type) {
-
-	char username[20];
+{
+	char username[20], garbage[20];
 	int serverID;
 	log_debug("Handling membership change %s", mem_info->changed_member);
 	sscanf(sender, "%[^_]_%d", username, &serverID);
@@ -641,8 +657,12 @@ static int handle_membership_message(char *sender, int num_groups, membership_in
 		}
 		if(Is_caused_join_mess(service_type))
 		{
-			log_info("Successfully connected to server %d", current_session.connected_server);
-			current_session.is_connected = 1;
+			sscanf(mem_info->changed_member + 1, "%d%s", &serverID, garbage);
+			if(serverID == current_session.connected_server)
+			{
+				log_info("Successfully connected to server %d", current_session.connected_server);
+				current_session.is_connected = 1;
+			}
 		}
 	}
 	return 0;

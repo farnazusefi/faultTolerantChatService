@@ -90,3 +90,25 @@ int get_last_messages(char * chatroom, Message* output, u_int32_t num_of_message
 {
  return 0;
 }
+
+void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32_t *length, logEvent *logs)
+{
+    FILE * fp = log_files[server_id - 1];
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    logEvent e;
+    int offset = 0;
+    *length = 0;
+    while ((read = getline(&line, &len, fp)) != -1) {
+        log_debug("Retrieved line of length %zu from server %d log file:\n", read, server_id);
+        log_debug("%s", line);
+        parseLineInLogFile(line, &e);
+        if(e.lamportCounter > lamport_counter)
+        {
+            memcpy(logs + offset, &e, sizeof(e));
+            offset+= sizeof(e);
+            (*length)++;
+        }
+    }
+}

@@ -46,3 +46,5 @@ void addLikerToMessage(char *chatroom, u_int32_t server_id, u_int32_t lamportCou
 void removeLikerOfMessage(char *chatroom, u_int32_t server_id, u_int32_t lamportCounter, char *userName);
 
 int get_last_messages(char * chatroom, Message* output, u_int32_t num_of_messages);
+
+void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32_t *length, logEvent *logs);

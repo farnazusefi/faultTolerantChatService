@@ -1,194 +1,93 @@
-/**
- * iterator.c
- *
- * Creation Date: 15/05/2019
- *
- * Authors:
- * Leonardo Vencovsky (https://github.com/LeoVen)
- *
- * Iterator Example
- */
-#include "cmc/hashset.h"
+#include <sys/types.h>
 #include <stdio.h>
-#include <inttypes.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dirent.h>
 
-// Int hash function
-size_t inthash(int t)
-{
-    size_t a = t;
-    a += ~(a << 15);
-    a ^= (a >> 10);
-    a += (a << 3);
-    a ^= (a >> 6);
-    a += ~(a << 11);
-    a ^= (a >> 16);
-    return a;
+#include "log.h"
+#include "fileService.h"
+
+static char *get_filename_ext(const char *filename) {
+    const char *dot = strrchr(filename, '.');
+    if(!dot || dot == filename) return "";
+    return dot + 1;
 }
 
-// Int compare function
-int intcmp(int a, int b)
+static void dump_message_from_file(u_int32_t chatroom_index, Message m)
 {
-    return a - b;
+    u_int32_t msg_pointer;
+	if (current_session.chatrooms[chatroom_index].numOf_messages < 25)
+	{
+		msg_pointer = current_session.chatrooms[chatroom_index].numOf_messages;
+		log_debug("chatroom %s has %d message(s)", chatroom, msg_pointer);
+	}
+	else
+	{
+		msg_pointer = current_session.chatrooms[chatroom_index].message_start_pointer;
+	}
+	memcpy(current_session.chatrooms[chatroom_index].messages[msg_pointer].message, m.message, strlen(m.message));
+	memcpy(current_session.chatrooms[chatroom_index].messages[msg_pointer].userName, m.userName, strlen(m.userName));
+	current_session.chatrooms[chatroom_index].messages[msg_pointer].userName[strlen(m.userName)] = 0;
+
+	current_session.chatrooms[chatroom_index].messages[msg_pointer].numOfLikes = 0;
+	current_session.chatrooms[chatroom_index].messages[msg_pointer].lamportCounter = m.lamportCounter;
+	current_session.chatrooms[chatroom_index].messages[msg_pointer].serverID = m.serverID;
+	current_session.chatrooms[chatroom_index].numOf_messages++;
+	if (current_session.chatrooms[chatroom_index].message_start_pointer == 25)
+	{
+		current_session.chatrooms[chatroom_index].message_start_pointer = 0;
+	}
 }
 
-// Creates a hashset of integers
-HASHSET_GENERATE(hs, hashset, ,int)
-
-int main(int argc, char const *argv[])
+static void_rebuild_lts_data(u_int32_t index)
 {
-    // Create a new hashset with an initial capacity of 100 and load factor of 0.6
-    hashset *my_hashset = hs_new(100, 0.6, intcmp, inthash);
+    current_session.chatroom[index].
+}
 
-    // Add elements to the hashset
-    for (int i = 0; i < 20; i++)
-    {
-        hs_insert(my_hashset, i);
+static void create_chatroom_from_logs()
+{
+	DIR *directory;
+	struct dirent* file;
+	FILE *cf;
+    char ch;
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+	char chatroom_name[20];
+    Message m;
+    u_int32_t index;
+	directory = opendir(".");
+    if (directory == NULL) {
+        log_error("error opening base directory");
+        exit(2);
     }
 
-    // Iterate from the start (index 0) to the end (index count - 1) of the hashset
-    for (hashset_iter it = my_hashset->it_start(my_hashset); // Initialize iterator 'it' to the start of the hashset
-         !hs_iter_end(&it);                                  // Conditional stop (until it is not at the end)
-         hs_iter_next(&it))                                  // Iterator goes one position forward
-    {
-        // Access the current element
-        int e = hs_iter_value(&it);
+    while ((file=readdir(directory)) != NULL) {
+        log_debug("filename: %s\n", file->d_name);
+		if(strcmp("chatroom", get_filename_ext(file->d_name)) == 0)
+		{
+			sscanf(file->d_name, "%[^.].chatroom", chatroom_name);
+            index = find_chatroom_index(chatroom_name);
+            if (index == -1)
+		        index = create_new_chatroom(chatroom_name, 1);
+			log_debug("chatroom file found %s for room %s, idx = %d", file->d_name, chatroom_name, index);
+            cf = fopen(file->d_name, "r");
+            if ( cf != NULL )
+            {
+                while ((read = getline(&line, &len, cf)) != -1) {
+                    parseLineInMessagesFile(line, &m);
+                    log_debug("LTS = %d, %d", m.serverID, m.lamportCounter);
+                    dump_message_from_file(index, m);
+                }
+            }
+            rebuild_lts_data(index);
+		}
+	}
+	closedir(directory);
+}
 
-        // Access the current index (index is relative to all the elements in the iteration)
-        size_t i = hs_iter_index(&it);
 
-        // Print hashset
-
-        // Index is useful in situations like this
-        // If it is the first element
-        if (i == 0)
-            printf("[ %d, ", e);
-        // If it is the last element
-        else if (i == hs_count(my_hashset) - 1)
-            printf("%d ]\n", e);
-        // For elements at the middle
-        else
-            printf("%d, ", e);
-    }
-
-    // Index can also be used to iterate over a certain portion of a collection
-    size_t limit = hs_count(my_hashset) / 2;
-    for (hashset_iter it = my_hashset->it_start(my_hashset); !hs_iter_end(&it); hs_iter_next(&it))
-    {
-        // Access the current element
-        int e = hs_iter_value(&it);
-
-        // Access the current index (index is relative to all the elements in the iteration)
-        size_t i = hs_iter_index(&it);
-
-        // Print hashset up until limit
-
-        // If it is the first element
-        if (i == 0)
-            printf("[ %d, ", e);
-        // If it is the last element
-        else if (i == limit - 1) // -1 because index is 0 based and we want half of the hashset
-        {
-            printf("%d ]\n", e);
-            break;
-        }
-        // For elements at the middle
-        else
-            printf("%d, ", e);
-    }
-
-    // Going backwards
-    for (hashset_iter it = my_hashset->it_end(my_hashset); // Initialize iterator 'it' to the end of the hashset
-         !hs_iter_start(&it);                              // Conditional stop (until it is not at the start)
-         hs_iter_prev(&it))                                // Iterator goes one position backwards
-    {
-        // Access the current element
-        int e = hs_iter_value(&it);
-
-        // Access the current index (index is relative to all the elements in the iteration)
-        size_t i = hs_iter_index(&it);
-
-        // Print hashset
-        // Note how the conditions for the first and last elements are simply swapped
-        // Because iterating backwards make the first element be the index count - 1
-        // and the last one be the index 0
-
-        // If it is the first element
-        if (i == hs_count(my_hashset) - 1)
-            printf("[ %d, ", e);
-        // If it is the last element
-        else if (i == 0)
-            printf("%d ]\n", e);
-        // For elements at the middle
-        else
-            printf("%d, ", e);
-    }
-
-    // You can also use iterators in a while loop
-    // But to do so you must declare the iterator struct outside the loop first
-    hashset_iter it;
-
-    // You have three options:
-    // - Initialize it using the functions provided by the hashset [ my_hashset->it_start() and my_hashset->it_end() ]
-    // - Initialize it using the init() function (when the iterator is already allocated)
-    // - Initialize it using the new() function (allocates on the heap, pointers only)
-
-    it = my_hashset->it_start(my_hashset);
-    it = my_hashset->it_end(my_hashset);
-
-    // This is equivalent to it_start()
-    hs_iter_init(&it, my_hashset);
-
-    // For pointers
-    // Also equivalent to it_start()
-    hashset_iter *iter = hs_iter_new(my_hashset);
-
-    // The actual while loop
-    while (!hs_iter_end(iter))
-    {
-        // Accessing elements
-        int e = hs_iter_value(iter);
-        size_t i = hs_iter_index(iter);
-
-        // Print index and element
-        printf("hashset[%2" PRIuMAX "] = %2d\n", i, e);
-
-        // Move iterator forwards
-        hs_iter_next(iter);
-    }
-
-    // Send the iterator to the start of the hashset
-    hs_iter_to_start(iter);
-
-    // Send the iterator to the end of the hashset
-    hs_iter_to_end(iter);
-
-    // Backwards loop
-    while (!hs_iter_start(iter))
-    {
-        // Accessing elements
-        int e = hs_iter_value(iter);
-        size_t i = hs_iter_index(iter);
-
-        // Print index and element
-        printf("hashset[%2" PRIuMAX "] = %2d\n", i, e);
-
-        // Move iterator backwards
-        hs_iter_prev(iter);
-    }
-
-    // Certain iterators also allow you to modify the contents it is iterating over
-    // Exceptions are collections that depend of the current state of the element
-    // like tree-based collections and heap (collections that have some kind of ordering).
-    // You also can't change the keys of an associative collection
-
-    // In the case of a hashset or any set, this is not possible because the
-    // values of a set are its keys. Changing the elements could cause the set
-    // to be in an invalid state.
-
-    // Dispose the iterator called by hs_iter_new()
-    hs_iter_free(iter);
-    // Dispose the hashset created
-    hs_free(my_hashset);
-
-    return 0;
+int main()
+{
+    create_chatroom_from_logs();
 }
