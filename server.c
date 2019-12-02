@@ -982,6 +982,7 @@ static int send_anti_entropy_to_server(u_int32_t server_id)
 
 static void handle_server_join(u_int32_t server_id)
 {
+    log_debug("handling server join %d", server_id);
 	current_session.membership[server_id - 1] = 1;
 	send_anti_entropy_to_server(server_id);
 }
