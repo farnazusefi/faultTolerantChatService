@@ -605,6 +605,7 @@ static int handle_history() {
 	sendHistoryRequestToServer(current_session.chatroom);
 	return 0;
 }
+
 static int handle_membership_status() {
 	sendMembershipRequestToServer();
 	return 0;
@@ -635,7 +636,7 @@ static void display_disconnection_to_user()
 	Print_menu();
 }
 
-static int handle_membership_message(char *sender, int num_groups, membership_info *mem_info, int service_type) {
+static int handle_membership_message(char *sender, int num_groups, membership_info *mem_info, int service_type)
 {
 	char username[20], garbage[20];
 	int serverID;
@@ -743,6 +744,7 @@ static void displayMembershipStatus(u_int32_t *list, u_int32_t size) {
 	fflush(stdout);
 	Print_menu();
 }
+
 static int handle_membership_status_response(char *message, int size, int num_groups) {
 
 	u_int32_t numOfMembers;
