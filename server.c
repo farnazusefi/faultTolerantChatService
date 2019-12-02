@@ -362,7 +362,7 @@ static void dump_message_from_file(u_int32_t chatroom_index, Message m)
 	}
 }
 
-static void_rebuild_lts_data(u_int32_t index)
+static void rebuild_lts_data(u_int32_t index)
 {
 	int i;
 	for(i = 0;i < current_session.chatrooms[index].numOf_messages; i++)
