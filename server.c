@@ -88,6 +88,9 @@ static int handle_like_unlike(char *message, char event_type);
 static int handle_history();
 static int handle_membership_status();
 
+static int send_anti_entropy_to_server(u_int32_t server_id);
+static int create_new_chatroom(char *chatroom, int no_create_file);
+static int find_chatroom_index(char *chatroom);
 static int parse(char *message, int size, int num_groups);
 static int handle_server_update();
 static int handle_participant_update(char *message, int msg_size);
@@ -342,7 +345,7 @@ static void dump_message_from_file(u_int32_t chatroom_index, Message m)
 	if (current_session.chatrooms[chatroom_index].numOf_messages < 25)
 	{
 		msg_pointer = current_session.chatrooms[chatroom_index].numOf_messages;
-		log_debug("chatroom %s has %d message(s)", chatroom, msg_pointer);
+		log_debug("chatroom %s has %d message(s)", current_session.chatrooms[chatroom_index].name, msg_pointer);
 	}
 	else
 	{
@@ -376,7 +379,6 @@ static void create_chatroom_from_logs()
 	DIR *directory;
 	struct dirent* file;
 	FILE *cf;
-    char ch;
     char * line = NULL;
     size_t len = 0;
     ssize_t read;
@@ -550,7 +552,6 @@ static int send_chatroom_update_to_clients(char *chatroom, int index)
 static int handle_connect(char *message, u_int32_t size)
 {
 	u_int32_t username_size;
-	int32_t *chatroom_id;
 	int ret;
 	char username[20];
 	char group_name[30];
@@ -851,7 +852,7 @@ static int handle_server_update(char *messsage, int size)
 	log_debug("handling server update (of server %d) from server %d. update line is: %s", server_id, sender_id, line);
 	parseLineInLogFile(line, &e);
 	if(e.lamportCounter <= current_session.lamport_counters[current_session.server_id - 1][server_id - 1]){
-		log_warn("received duplicate data. ignoring")
+		log_warn("received duplicate data. ignoring");
 		return 0;
 	}
 	addEventToLogFile(server_id, line);
@@ -881,11 +882,11 @@ static int resend_data(u_int32_t server_id, u_int32_t lamport_counter)
 {
 	int i;
 	char username[20];
-	u_int32_t size = (13 + strlen(e.payload));
+	u_int32_t size = (13 + 1300);
 	char buffer[size];
 	logEvent logs[100]; // TODO: maybe more?
 	u_int32_t length = 0;
-	get_logs_newer_than(server_id, lamport_counter, &length, &logs);
+	get_logs_newer_than(server_id, lamport_counter, &length, logs);
 	log_debug("getting newer data than LTS %d,%d from log file, totalling %d", server_id, lamport_counter, length);
 	for(i = 0; i < length; i++)
 	{
@@ -929,7 +930,7 @@ static int handle_anti_entropy(char *messsage, int size)
 	{
 		for (j = 0; j < NUM_SERVERS; j++)
 		{
-			memcpy(lamport_ctr, messsage + offset, 4);
+			memcpy(&lamport_ctr, messsage + offset, 4);
 			offset += 4;
 			if (i == current_session.server_id - 1)
 			{
@@ -948,7 +949,7 @@ static int handle_anti_entropy(char *messsage, int size)
 			// But, if the server is behind, and I'm responsible, resend the data.
 			if (i_am_responsible_to_resend_data(j+1, lamport_ctr)){
 				log_debug("I am responsible for missing data. attempting to send...");
-				resend_data(j+1, lamport_ctr)
+				resend_data(j+1, lamport_ctr);
 			}
 		}
 	}
@@ -969,7 +970,7 @@ static int send_anti_entropy_to_server(u_int32_t server_id)
 	{
 		for (j = 0; j < NUM_SERVERS; j++)
 		{
-			memcpy(payload + offset, current_session.lamport_counters[i][j], 4);
+			memcpy(payload + offset, &current_session.lamport_counters[i][j], 4);
 			offset += 4;
 		}
 	}
