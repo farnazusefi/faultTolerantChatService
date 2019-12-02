@@ -1,10 +1,11 @@
 #include "sp.h"
-
+#define _GNU_SOURCE
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
+#include <unistd.h>
 
 #include "log.h"
 #include "fileService.h"
@@ -333,7 +334,7 @@ static int parse(char *message, int size, int num_groups)
 	return 0;
 }
 
-static char *get_filename_ext(const char *filename) {
+static const char *get_filename_ext(const char *filename) {
     const char *dot = strrchr(filename, '.');
     if(!dot || dot == filename) return "";
     return dot + 1;
