@@ -926,7 +926,7 @@ static int handle_anti_entropy(char *messsage, int size)
 	memcpy(&sender_id, messsage + 1, 4);
 	if (sender_id == current_session.server_id)
 		return 0;
-	log_debug("Parsing Anti-entropy message");
+	log_debug("Parsing Anti-entropy message from %d", sender_id);
 	for (i = 0; i < NUM_SERVERS; i++)
 	{
 		for (j = 0; j < NUM_SERVERS; j++)
@@ -1011,7 +1011,8 @@ static int handle_membership_change(char **target_groups, int num_groups, int is
 		{
 			sscanf(target_member + 1, "%d%s", &server_id, garbage);
 			log_warn("Server %s with id %d  joined the membership with %d members ", target_member, server_id, num_groups);
-			handle_server_join(server_id);
+			if(server_id != current_session.server_id)
+				handle_server_join(server_id);
 		}
 		else
 		{
