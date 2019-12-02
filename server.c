@@ -901,20 +901,38 @@ static int resend_data(u_int32_t server_id, u_int32_t lamport_counter)
 	return 0;
 }
 
-static int i_am_responsible_to_resend_data(u_int32_t server_id, u_int32_t lamport_counter)
+static int i_am_responsible_to_resend_data(u_int32_t server_id)
 {
 	if(server_id == current_session.server_id)
-		return 1;	// my own data
-	if(current_session.membership[server_id-1] == 0)
 	{
-		// the responsible server is no in the mebership, but I am the lowest numbered server who has the data
 		int i;
-		for(i = 0; i < NUM_SERVERS; i++)
-		{
-			if(current_session.lamport_counters[current_session.server_id - 1][i] > lamport_counter)
-				if(i == current_session.server_id - 1)
-					return 1;
+		u_int32_t min_lc = current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1];
+		for(i = NUM_SERVERS-1; i >= 0; i--)
+			if (current_session.membership[i] && current_session.lamport_counters[i][server_id - 1] < min_lc)
+				min_lc = current_session.lamport_counters[i][server_id - 1];
+		if(min_lc < current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1])
+			resend_data(current_session.server_id, min_lc);
+		return 1;	// my own data
+	}
+	else
+	{
+		int i;
+		u_int32_t max_lc = 0;
+		u_int32_t min_lc = -1;
+		u_int32_t max_server = 0;
+		for(i = NUM_SERVERS-1; i >= 0; i--){
+			if(current_session.membership[i]){
+				if (current_session.lamport_counters[i][server_id - 1] >= max_lc){
+					max_lc = current_session.lamport_counters[i][server_id - 1];
+					max_server = i+1;
+				}
+				if(current_session.lamport_counters[i][server_id - 1] < min_lc)
+					min_lc = current_session.lamport_counters[i][server_id - 1];
+			}
 		}
+		if(min_lc < max_lc && max_server == current_session.server_id)
+			resend_data(current_session.server_id, min_lc);
+		return 1;	// my own data
 	}
 	return 0;
 }
@@ -947,13 +965,17 @@ static int handle_anti_entropy(char *messsage, int size)
 				else if(lamport_ctr > current_session.lamport_counters[i][j]) // only update these rows if its data is more recent about others	
 					current_session.lamport_counters[i][j] = lamport_ctr;
 			}
-			// But, if the server is behind, and I'm responsible, resend the data.
-			if (i_am_responsible_to_resend_data(j+1, lamport_ctr)){
-				log_debug("I am responsible for missing data. attempting to send...");
-				resend_data(j+1, lamport_ctr);
-			}
 		}
 	}
+	// But, if the server is behind, and I'm responsible, resend the data.
+	for (i = 0; i < NUM_SERVERS; i++)
+	{
+		if (i_am_responsible_to_resend_data(i+1)){
+			log_debug("I am responsible for missing data. attempting to send...");
+			resend_data(j+1, lamport_ctr);	// TODO: do not send the same data more than one time
+		}
+	}
+
 	if(outdated){
 		log_debug("resending Anti-entropy to all");
 		send_anti_entropy_to_server(0);
