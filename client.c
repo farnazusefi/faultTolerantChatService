@@ -85,6 +85,7 @@ static int handle_membership_status();
 static int parse(char *message, int size, int num_groups);
 static int handle_membership_message(char *sender, int num_groups, membership_info *mem_info, int service_type);
 static int handle_update_response(char *message, int size, int num_groups);
+static int handle_history_response(char *message, int size);
 static int handle_membership_status_response(char *message, int size, int num_groups);
 
 //////////////////////////   Core Functions  ////////////////////////////////////////////////////
@@ -782,7 +783,7 @@ static void displayHistory(Message *messages, u_int32_t num_of_messages){
 	Print_menu();
 }
 
-static int handle_update_response(char *message, int size) {
+static int handle_history_response(char *message, int size) {
 	u_int32_t username_size, num_messages, messageSize;
 	int offset = 5;
 	int i, pointer = 0;
@@ -809,7 +810,6 @@ static int handle_update_response(char *message, int size) {
 		memcpy(&messages[i].numOfLikes, message + offset + pointer + 4 + messageSize, 4);
 		pointer += (8 + messageSize);
 	}
-	current_session.numOfMessages = num_messages;
 	displayHistory(messages, num_messages);
 	return 0;
 }
