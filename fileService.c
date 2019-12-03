@@ -138,3 +138,54 @@ void retrieve_chatroom_history(u_int32_t me, char *chatroom, u_int32_t *num_of_m
 		}
 	}
 }
+
+
+void retrieve_line_from_logs(logEvent *e, u_int32_t *available_data, u_int32_t num_servers, u_int32_t *last_processed_counters)
+{
+    FILE * fp;
+    int i;
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    logEvent parsed_e;
+    for(i = 0;i< num_servers;i++)
+    {
+        fp = log_files[i];
+        rewind(fp);
+        available_data[i] = 0;
+        while ((read = getline(&line, &len, fp)) != -1)
+        {
+            if(strlen(line) < 2)    // reached \n
+                break;
+            parseLineInLogFile(line, &parsed_e);
+            if(parsed_e.lamportCounter > last_processed_counters[i]){
+                memcpy(&e[i], &parsed_e, sizeof(parsed_e));
+                available_data[i] = 1;
+                break;
+            }
+        }
+    }
+}
+
+int get_lines_from_logs(logEvent *e, u_int32_t num_servers, &)
+{
+    FILE * fp;
+    int i;
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    logEvent e;
+    for(i = 0;i< num_servers;i++)
+    {
+        fp = log_files[i];
+        rewind(fp);
+        while ((read = getline(&line, &len, fp)) != -1)
+        {
+            if(strlen(line) < 2)    // reached \n
+                break;
+            parseLineInLogFile(line, &e);
+            if(e.lamportCounter == last_processed_counters[i])
+                break;
+        }
+    }
+}

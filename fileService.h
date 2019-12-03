@@ -50,3 +50,5 @@ int get_last_messages(char * chatroom, Message* output, u_int32_t num_of_message
 void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32_t *length, logEvent *logs);
 
 void retrieve_chatroom_history(u_int32_t me, char *chatroom, u_int32_t *num_of_messages, Message *mesages);
+
+void retrieve_line_from_logs(logEvent *e, u_int32_t *available_data, u_int32_t num_servers, u_int32_t *last_processed_counters);

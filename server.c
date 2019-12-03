@@ -42,6 +42,12 @@ enum MessageType
 	TYPE_PARTICIPANT_UPDATE = 'p'
 };
 
+enum State
+{
+	STATE_PRIMARY,
+	STATE_RECONCILING
+};
+
 typedef struct Chatroom_t
 {
 	char name[20];
@@ -61,6 +67,11 @@ typedef struct Session_t
 	int num_of_chatrooms;			   // to keep track of in-memory data structures
 	u_int32_t membership[5];		   // Membership status of each server
 	u_int32_t lamport_counters[5][5];  // Stores the last received lamport counter from each server according to each server's view
+	u_int32_t lamport_counter;
+	enum State state;
+	struct Node *unprocessed_update_start;
+	u_int32_t unprocessed_updates_count;
+	u_int32_t processed_lamport_counters[5]
 } Session;
 
 ///////////////////////// Global Variables //////////////////////////////////////////////////////
@@ -91,6 +102,7 @@ static int handle_like_unlike(char *message, char event_type);
 static int handle_history();
 static int handle_membership_status(char *message, int msg_size);
 
+static int check_primary_conditions();
 static int send_anti_entropy_to_server(u_int32_t server_id);
 static int create_new_chatroom(char *chatroom, int no_create_file);
 static int find_chatroom_index(char *chatroom);
@@ -455,9 +467,14 @@ static int initialize()
 
 	current_session.connected_clients = 0;
 	current_session.num_of_chatrooms = 0;
+	current_session.unprocessed_updates_count = 0;
+	current_session.state = STATE_PRIMARY;
+	current_session.unprocessed_update_start = NULL;
+
 	for (i = 0; i < 5; i++)
 	{
 		current_session.membership[i] = 0;
+		current_session.processed_lamport_counters[i] = 0;
 		for (j = 0; j < 5; j++)
 		{
 			current_session.lamport_counters[i][j] = 0;
@@ -563,12 +580,6 @@ static int send_chatroom_update_to_clients(char *chatroom, int index)
 	SP_multicast(Mbox, AGREED_MESS, chatroomGroup, 2, offset + 5, message);
 	return 0;
 }
-
-//static int handle_disconnect(char *username) {
-//	log_warn("handling disconnect by doing nothing");
-// TODO: ?
-//	return 0;
-//}
 
 static int handle_connect(char *message, u_int32_t size)
 {
@@ -738,6 +749,13 @@ static int handle_append(char *message, int msg_size)
 	chatroom[chatroom_length] = 0;
 	username[username_length] = 0;
 	log_debug("handling append message from %s in chatroom %s", username, chatroom);
+	if(current_session.state == STATE_RECONCILING)
+	{
+		log_warn("in the midst of reconciling. appending to a temporary list to process later. list length before append is %d", current_session.unprocessed_updates_count);
+		push(current_session.unprocessed_update_start, message, msg_size);
+		current_session.unprocessed_updates_count++;
+		return 0;
+	}
 
 	chatroom_index = find_chatroom_index(chatroom);
 	if (chatroom_index == -1)
@@ -750,7 +768,8 @@ static int handle_append(char *message, int msg_size)
 	memcpy(payload, message + offset + 4, payload_length);
 	payload[payload_length] = 0;
 	e.eventType = TYPE_APPEND;
-	e.lamportCounter = ++current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1];
+	e.lamportCounter = ++current_session.lamport_counter;
+	current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1] = current_session.lamport_counter;
 	char line[100];
 	sprintf(line, "%s~%s", username, payload);
 	memcpy(e.payload, line, payload_length + username_length + 1);
@@ -818,6 +837,13 @@ static int handle_like_unlike(char *message, char event_type)
 	memcpy(chatroom, message + 9 + username_length, chatroom_length);
 	username[username_length] = 0;
 	chatroom[chatroom_length] = 0;
+	if(current_session.state == STATE_RECONCILING)
+	{
+		log_warn("in the midst of reconciling. appending to a temporary list to process later. list length before append is %d", current_session.unprocessed_updates_count);
+		push(current_session.unprocessed_update_start, message, strlen(message));
+		current_session.unprocessed_updates_count++;
+		return 0;
+	}
 	chatroom_index = find_chatroom_index(chatroom);
 	if (chatroom_index == -1)
 	{
@@ -829,8 +855,8 @@ static int handle_like_unlike(char *message, char event_type)
 	memcpy(&counter, message + offset + 4, 4);
 	log_debug("handling like/unlike for message #%d, %d from %s", pid, counter, username);
 	e.eventType = event_type;
-	e.lamportCounter = ++current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1];
-
+	e.lamportCounter = ++current_session.lamport_counter;
+	current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1] = current_session.lamport_counter;
 	sprintf(line, "%s~%d~%d", username, pid, counter);
 	log_debug("like/unlike log payload is: %s", line);
 	memcpy(e.payload, line, strlen(line));
@@ -935,28 +961,21 @@ static int handle_membership_status(char *message, int msg_size)
 
 //////////////////////////   Server Event Handlers ////////////////////////////////////////////////////
 
-static int handle_server_update(char *messsage, int size)
+static int log_remaining()
 {
-	u_int32_t sender_id, server_id, log_length, chatroom_index;
-	logEvent e;
-	char username[20], message_text[80];
-	memcpy(&sender_id, messsage + 1, 4);
-	memcpy(&server_id, messsage + 5, 4);
-	memcpy(&log_length, messsage + 9, 4);
-	if (server_id == current_session.server_id)
-		return 0;
-	char line[log_length];
-	memcpy(&line, messsage + 13, log_length);
-	log_debug("handling server update (of server %d) from server %d. update line is: %s", server_id, sender_id, line);
-	parseLineInLogFile(line, &e);
-	if(e.lamportCounter <= current_session.lamport_counters[current_session.server_id - 1][server_id - 1]){
-		log_warn("received duplicate data. ignoring");
-		return 0;
+	int i;
+	for(i = 0;i< NUM_SERVERS;i++)
+	{
+		if(current_session.processed_lamport_counters[i] < current_session.lamport_counters[current_session.server_id - 1][i])
+			return 1;
 	}
-	addEventToLogFile(server_id, line);
-	current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1] = e.lamportCounter;
-	current_session.lamport_counters[current_session.server_id - 1][server_id - 1] = e.lamportCounter;
-	current_session.lamport_counters[sender_id - 1][server_id - 1] = e.lamportCounter;
+	return 0;
+}
+
+static int process_log_event(logEvent e, u_int32_t server_id)
+{
+	u_int32_t chatroom_index;
+	char username[20], message_text[80];
 	chatroom_index = find_chatroom_index(e.chatroom);
     if(chatroom_index == -1){
         chatroom_index = create_new_chatroom(e.chatroom, 0);
@@ -976,6 +995,68 @@ static int handle_server_update(char *messsage, int size)
 		log_error("Invalid event type %c", e.eventType);
 		break;
 	}
+	current_session.processed_lamport_counters[server_id - 1] = e.lamportCounter;
+	return 0;
+}
+
+static int process_log_files()
+{
+	logEvent e[NUM_SERVERS];
+	u_int32_t data_available[NUM_SERVERS];
+	u_int32_t min_lc = -1, min_server_id = 0;
+	int i;
+	while(log_remaining())
+	{
+		retrieve_line_from_logs(e, data_available, NUM_SERVERS, current_session.processed_lamport_counters);
+		for(i = 0;i<NUM_SERVERS;i++)
+		{
+			if(data_available[i])
+			{
+				if(e[i].lamportCounter < min_lc)
+				{
+					min_lc = e[i].lamportCounter;
+					min_server_id = i+1;
+				}
+			}
+		}
+
+		process_log_event(e[min_server_id - 1], min_server_id);
+	}
+}
+
+static int handle_server_update(char *messsage, int size)
+{
+	u_int32_t sender_id, server_id, log_length, chatroom_index;
+	logEvent e;
+	char username[20], message_text[80];
+	memcpy(&sender_id, messsage + 1, 4);
+	memcpy(&server_id, messsage + 5, 4);
+	memcpy(&log_length, messsage + 9, 4);
+	if (server_id == current_session.server_id)
+		return 0;
+	char line[log_length];
+	memcpy(&line, messsage + 13, log_length);
+	log_debug("handling server update (of server %d) from server %d. update line is: %s", server_id, sender_id, line);
+	parseLineInLogFile(line, &e);
+	if(e.lamportCounter <= current_session.lamport_counters[current_session.server_id - 1][server_id - 1]){
+		log_warn("received duplicate data. ignoring");
+		return 0;
+	}
+	addEventToLogFile(server_id, line);
+	if(e.lamportCounter > current_session.lamport_counter)
+		current_session.lamport_counter = e.lamportCounter;
+	// current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1] = e.lamportCounter;
+	current_session.lamport_counters[current_session.server_id - 1][server_id - 1] = e.lamportCounter;
+
+	if(current_session.state == STATE_RECONCILING){
+		if(check_primary_conditions()){
+			current_session.state = STATE_PRIMARY;
+			process_log_files();	// TODO
+			handle_unprocessed_updates();
+		}
+		return 0;
+	}
+	process_log_event(e, server_id);
 	return 0;
 }
 
@@ -1052,17 +1133,48 @@ static int i_am_responsible_to_resend_data(u_int32_t server_id)
 	return 0;
 }
 
+static int check_primary_conditions()
+{
+	int i, j;
+	for(i = 0; i < NUM_SERVERS; i++)
+	{
+		if(!current_session.membership[i] && i == current_session.server_id - 1)
+			continue;
+		for(j = 0;j < NUM_SERVERS;j++)
+		{
+			if(current_session.lamport_counters[i][j] != current_session.lamport_counters[current_session.server_id - 1][j])
+				return 0;
+		}
+	}
+	return 1;
+}
+
+static int handle_unprocessed_updates()
+{
+	if(current_session.unprocessed_updates_count){
+		char mess[MAX_MESSLEN];
+		int len;
+		while (current_session.unprocessed_update_start != NULL)
+		{
+			pop(&current_session.unprocessed_update_start, mess, &len);
+			current_session.unprocessed_updates_count--;
+			parse(mess, len, 0);
+		}
+		
+	}
+}
+
 static int handle_anti_entropy(char *messsage, int size)
 {
 	u_int32_t sender_id, lamport_ctr;
-	int i, j, offset = 5, outdated = 0;;
+	int i, j, offset = 5, outdated = 0, updated = 0;
 	memcpy(&sender_id, messsage + 1, 4);
 	if (sender_id == current_session.server_id)
 		return 0;
 	log_debug("Parsing Anti-entropy message from %d", sender_id);
-	for (i = 0; i < NUM_SERVERS; i++)
+	for (i = 0; i < NUM_SERVERS; i++)	// ROW
 	{
-		for (j = 0; j < NUM_SERVERS; j++)
+		for (j = 0; j < NUM_SERVERS; j++)	// COLUMN
 		{
 			memcpy(&lamport_ctr, messsage + offset, 4);
 			offset += 4;
@@ -1075,13 +1187,22 @@ static int handle_anti_entropy(char *messsage, int size)
 			}
 			else
 			{
-				if (i == sender_id - 1)					// Trust everything it said about itself.
-					current_session.lamport_counters[i][j] = lamport_ctr;
+				if (i == sender_id - 1){
+					if(lamport_ctr > current_session.lamport_counters[i][j]){
+						current_session.lamport_counters[i][j] = lamport_ctr;
+						updated = 1;
+					}
+				}					// Trust everything it said about itself.
 				else if(lamport_ctr > current_session.lamport_counters[i][j]) // only update these rows if its data is more recent about others	
+				{
 					current_session.lamport_counters[i][j] = lamport_ctr;
+					updated = 1;
+				}
+				
 			}
 		}
 	}
+
 	// But, if the server is behind, and I'm responsible, resend the data.
 	for (i = 0; i < NUM_SERVERS; i++)
 	    i_am_responsible_to_resend_data(i+1);
@@ -1089,6 +1210,10 @@ static int handle_anti_entropy(char *messsage, int size)
 	if(outdated){
 		log_debug("resending Anti-entropy to all");
 		send_anti_entropy_to_server(0);
+	}
+	if(updated && check_primary_conditions()){
+		current_session.state = STATE_PRIMARY;
+		handle_unprocessed_updates();
 	}
 
 	return 0;
@@ -1116,6 +1241,7 @@ static void handle_server_join(u_int32_t server_id)
 {
     log_debug("handling server join %d", server_id);
 	current_session.membership[server_id - 1] = 1;
+	current_session.state = STATE_RECONCILING;
 	send_anti_entropy_to_server(server_id);
 }
 
