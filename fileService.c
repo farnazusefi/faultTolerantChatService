@@ -116,3 +116,25 @@ void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32
     }
     fseek(fp, 0, SEEK_END);
 }
+
+void retrieve_chatroom_history(u_int32_t me, char *chatroom, u_int32_t *num_of_messages, Message *mesages)
+{
+    char filename[20];
+    int read;
+    char line[400];
+    u_int32_t len;
+    Message m;
+    *num_of_messages = 0;
+    get_chatroom_file_name(me, chatroom, filename);
+    FILE *cf = fopen(filename, "r");
+	if ( cf != NULL )
+	{
+		while ((read = getline(&line, &len, cf)) != -1) {
+            if(len < 3)
+                break;
+			parseLineInMessagesFile(line, &mesages[*num_of_messages]);
+			log_debug("LTS = %d, %d", m.serverID, m.lamportCounter);
+			(*num_of_messages)++;
+		}
+	}
+}

@@ -20,6 +20,7 @@
 #define MAX_CHATROOMS 100
 #define RECREATE_FILES_IN_STARTUP 1
 #define NUM_SERVERS 5
+#define MAX_HISTORY_MESSAGES 100
 
 ///////////////////////// Data Structures   //////////////////////////////////////////////////////
 
@@ -32,6 +33,7 @@ enum MessageType
 	TYPE_LIKE = 'l',
 	TYPE_UNLIKE = 'r',
 	TYPE_HISTORY = 'h',
+	TYPE_HISTORY_RESPONSE = 'H',
 	TYPE_MEMBERSHIP_STATUS = 'v',
 	TYPE_CLIENT_UPDATE = 'i',
 	TYPE_MEMBERSHIP_STATUS_RESPONSE = 'm',
@@ -843,11 +845,65 @@ static int handle_like_unlike(char *message, char event_type)
 	return 0;
 }
 
-static int handle_history()
+static int send_history_response(char *username, char *chatroom)
 {
-	// TODO: ...
+	int i;
+	FILE *cf;
+	char clientGroup[30];
+	u_int32_t index = find_chatroom_index(chatroom);
+	char response[1400];
+	u_int32_t num_of_messages, offset = 5;
+	u_int32_t message_size, username_size;
+	Message messages[MAX_HISTORY_MESSAGES];
+
+	retrieve_chatroom_history(current_session.server_id, chatroom, &num_of_messages, messages);
+
+	response[0] = TYPE_HISTORY_RESPONSE;
+    memcpy(response + 1, &num_of_messages, 4);
+	sprintf(clientGroup, "%s_%d", username, current_session.server_id);
+
+	for (i = 0; i < num_of_messages; i++)
+	{
+		message_size = strlen(messages[i].message);
+		log_debug("message size is %d", message_size);
+		memcpy(response + offset, &messages[i].serverID, 4);
+		memcpy(response + offset + 4, &messages[i].lamportCounter, 4);
+		//
+		username_size = strlen(messages[i].userName);
+		memcpy(response + offset + 8, &username_size, 4);
+		memcpy(response + offset + 12, &messages[i].userName, username_size);
+		//
+		offset += (12 + username_size);
+		memcpy(response + offset, &message_size, 4);
+		memcpy(response + offset + 4, current_session.chatrooms[index].messages[i].message, message_size);
+		log_debug("message is %s", messages[i].message);
+		memcpy(response + offset + 4 + message_size, &messages[i].numOfLikes, 4);
+		log_debug("num of likes is %s", messages[i].numOfLikes);
+		offset += (8 + message_size);
+	}
+	log_debug("sending history response to group %s with %d messages ", clientGroup, num_of_messages);
+	SP_multicast(Mbox, AGREED_MESS, clientGroup, 2, offset + 5, response);	
+}
+
+static int handle_history(char *message, u_int32_t size)
+{
+    u_int32_t username_length, chatroom_length;
+	u_int32_t size = 0, offset = 5;
+	char username[20], chatroom[20];
+
+	memcpy(&username_length, message + 1, 4);
+	memcpy(username, message + 5, username_length);
+	username[username_length] = 0;
+	offset += username_length;
+	memcpy(&chatroom_length, message + offset, 4);
+	memcpy(chatroom, message + offset + 4, chatroom_length);
+	chatroom[chatroom_length] = 0;
+	log_debug("handling history message from %s for chatroom %s", username, chatroom);
+	
+	send_history_response(username, chatroom);
 	return 0;
 }
+
 static int handle_membership_status(char *message, int msg_size)
 {
 	int i;

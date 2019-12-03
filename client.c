@@ -13,6 +13,7 @@
 #define MAX_VSSETS      10
 #define MAX_MEMBERS     100
 #define MAX_PARTICIPANTS 100
+#define MAX_HISTORY_MESSAGES 100
 ///////////////////////// Data Structures   //////////////////////////////////////////////////////
 
 enum MessageType {
@@ -23,6 +24,7 @@ enum MessageType {
 	TYPE_LIKE = 'l',
 	TYPE_UNLIKE = 'r',
 	TYPE_HISTORY = 'h',
+	TYPE_HISTORY_RESPONSE = 'H',
 	TYPE_MEMBERSHIP_STATUS = 'v',
 	TYPE_CLIENT_UPDATE = 'i',
 	TYPE_MEMBERSHIP_STATUS_RESPONSE = 'm',
@@ -622,6 +624,9 @@ static int parse(char *message, int size, int num_groups) {
 	case TYPE_MEMBERSHIP_STATUS_RESPONSE:
 		handle_membership_status_response(message, size, num_groups);
 		break;
+	case TYPE_HISTORY_RESPONSE:
+		handle_history_response(message, size);
+		break;
 	default:
 		log_error("Invalid message type received from server %d", type);
 		break;
@@ -758,5 +763,53 @@ static int handle_membership_status_response(char *message, int size, int num_gr
 		memcpy(&membersList[i], message + 5 + (4 * i), 4);
 	}
 	displayMembershipStatus(membersList, numOfMembers);
+	return 0;
+}
+
+static void displayHistory(Message *messages, u_int32_t num_of_messages){
+	printf("\n");
+	printf("==========\n");
+	printf("room: %s\n", current_session.chatroom);
+	int i;
+
+	printf("----------\n");
+	for (i = 0; i < num_of_messages; i++) {
+		printf("%d. %s: %s \t likes: %d\n", i+1, messages[i].userName,
+				messages[i].message, messages[i].numOfLikes);
+	}
+	printf("----------\n");
+	fflush(stdout);
+	Print_menu();
+}
+
+static int handle_update_response(char *message, int size) {
+	u_int32_t username_size, num_messages, messageSize;
+	int offset = 5;
+	int i, pointer = 0;
+	log_debug("Handling client history response message");
+	Message messages[MAX_HISTORY_MESSAGES];
+
+	memcpy(&num_messages, message + 1, 4);
+	log_debug("Parsed number of messages %d", num_messages);
+	for (i = 0; i < num_messages; i++){
+		memcpy(&messages[i].serverID, message + offset + pointer, 4);
+        log_debug("server ID = %d", &messages[i].serverID);
+		memcpy(&messages[i].lamportCounter, message + offset + pointer + 4, 4);
+        log_debug("lamport = %d", &messages[i].lamportCounter);
+      
+        memcpy(&username_size, message + offset + pointer + 8, 4); 
+        memcpy(messages[i].userName, message + offset + pointer + 12, username_size);
+        messages[i].userName[username_size] = 0;
+        log_debug("message uname is %s", messages[i].userName);
+        pointer += (12 + username_size);
+		memcpy(&messageSize, message + offset + pointer, 4);
+        log_debug("m size = %d", messageSize);
+		memcpy(&messages[i].message, message + offset + pointer +4, messageSize);
+        messages[i].message[messageSize] = 0;
+		memcpy(&messages[i].numOfLikes, message + offset + pointer + 4 + messageSize, 4);
+		pointer += (8 + messageSize);
+	}
+	current_session.numOfMessages = num_messages;
+	displayHistory(messages, num_messages);
 	return 0;
 }

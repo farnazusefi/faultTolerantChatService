@@ -48,3 +48,5 @@ void removeLikerOfMessage(char *chatroom, u_int32_t server_id, u_int32_t lamport
 int get_last_messages(char * chatroom, Message* output, u_int32_t num_of_messages);
 
 void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32_t *length, logEvent *logs);
+
+void retrieve_chatroom_history(u_int32_t me, char *chatroom, u_int32_t *num_of_messages, Message *mesages);
