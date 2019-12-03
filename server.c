@@ -847,8 +847,7 @@ static int handle_like_unlike(char *message, char event_type)
 
 static int send_history_response(char *username, char *chatroom)
 {
-	int i;
-	FILE *cf;
+	int i;	
 	char clientGroup[30];
 	u_int32_t index = find_chatroom_index(chatroom);
 	char response[1400];
@@ -857,7 +856,7 @@ static int send_history_response(char *username, char *chatroom)
 	Message messages[MAX_HISTORY_MESSAGES];
 
 	retrieve_chatroom_history(current_session.server_id, chatroom, &num_of_messages, messages);
-
+    // TODO: append_memory_messages(current_session.server_id, chatroom, &num_of_messages, messages)
 	response[0] = TYPE_HISTORY_RESPONSE;
     memcpy(response + 1, &num_of_messages, 4);
 	sprintf(clientGroup, "%s_%d", username, current_session.server_id);
@@ -882,13 +881,14 @@ static int send_history_response(char *username, char *chatroom)
 		offset += (8 + message_size);
 	}
 	log_debug("sending history response to group %s with %d messages ", clientGroup, num_of_messages);
-	SP_multicast(Mbox, AGREED_MESS, clientGroup, 2, offset + 5, response);	
+	SP_multicast(Mbox, AGREED_MESS, clientGroup, 2, offset + 5, response);
+    return 0;    
 }
 
 static int handle_history(char *message, u_int32_t size)
 {
     u_int32_t username_length, chatroom_length;
-	u_int32_t size = 0, offset = 5;
+	u_int32_t offset = 5;
 	char username[20], chatroom[20];
 
 	memcpy(&username_length, message + 1, 4);
@@ -909,8 +909,7 @@ static int handle_membership_status(char *message, int msg_size)
 	int i;
 	char clientGroup[30];
 	char response[NUM_SERVERS*4+5];
-    u_int32_t username_length;
-	u_int32_t size = 0;
+    u_int32_t username_length;	
 	char username[20];
     int offset = 5;
     u_int32_t num_servers;
