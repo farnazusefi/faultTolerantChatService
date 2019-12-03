@@ -117,13 +117,12 @@ void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32
     fseek(fp, 0, SEEK_END);
 }
 
-void retrieve_chatroom_history(u_int32_t me, char *chatroom, u_int32_t *num_of_messages, Message *mesages)
+void retrieve_chatroom_history(u_int32_t me, char *chatroom, u_int32_t *num_of_messages, Message *messages)
 {
     char filename[20];
     int read;
     char line[400];
     u_int32_t len;
-    Message m;
     *num_of_messages = 0;
     get_chatroom_file_name(me, chatroom, filename);
     FILE *cf = fopen(filename, "r");
@@ -132,13 +131,12 @@ void retrieve_chatroom_history(u_int32_t me, char *chatroom, u_int32_t *num_of_m
 		while ((read = getline(&line, &len, cf)) != -1) {
             if(len < 3)
                 break;
-			parseLineInMessagesFile(line, &mesages[*num_of_messages]);
-			log_debug("LTS = %d, %d", m.serverID, m.lamportCounter);
+			parseLineInMessagesFile(line, &messages[*num_of_messages]);
+			log_debug("LTS = %d, %d", messages[*num_of_messages].serverID, messages[*num_of_messages].lamportCounter);
 			(*num_of_messages)++;
 		}
 	}
 }
-
 
 void retrieve_line_from_logs(logEvent *e, u_int32_t *available_data, u_int32_t num_servers, u_int32_t *last_processed_counters)
 {
@@ -163,29 +161,6 @@ void retrieve_line_from_logs(logEvent *e, u_int32_t *available_data, u_int32_t n
                 available_data[i] = 1;
                 break;
             }
-        }
-    }
-}
-
-int get_lines_from_logs(logEvent *e, u_int32_t num_servers, &)
-{
-    FILE * fp;
-    int i;
-    char * line = NULL;
-    size_t len = 0;
-    ssize_t read;
-    logEvent e;
-    for(i = 0;i< num_servers;i++)
-    {
-        fp = log_files[i];
-        rewind(fp);
-        while ((read = getline(&line, &len, fp)) != -1)
-        {
-            if(strlen(line) < 2)    // reached \n
-                break;
-            parseLineInLogFile(line, &e);
-            if(e.lamportCounter == last_processed_counters[i])
-                break;
         }
     }
 }
