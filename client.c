@@ -661,6 +661,7 @@ static int handle_membership_message(char *sender, int num_groups, membership_in
 			sscanf(mem_info->changed_member + 1, "%d%s", &serverID, garbage);
 			if(serverID == current_session.connected_server)
 			{
+                E_dequeue( server_connect_timeout, 0, NULL );
 				log_info("Successfully connected to server %d", current_session.connected_server);
 				current_session.is_connected = 1;
 			}
@@ -738,7 +739,8 @@ static void displayMembershipStatus(u_int32_t *list, u_int32_t size) {
 	printf("----------\n");
 	int i;
 	for (i = 0; i < size; i++) {
-		printf("Server %d\n", list[i]);
+        if(list[i])
+    		printf("Server %d\n",i+1);
 	}
 	printf("----------\n");
 	fflush(stdout);

@@ -100,9 +100,12 @@ void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32
     logEvent e;
     int offset = 0;
     *length = 0;
+    rewind(fp);
     while ((read = getline(&line, &len, fp)) != -1) {
         log_debug("Retrieved line of length %zu from server %d log file:\n", read, server_id);
         log_debug("%s", line);
+        if(strlen(line) < 2)    // reached \n
+            break;
         parseLineInLogFile(line, &e);
         if(e.lamportCounter > lamport_counter)
         {
@@ -111,4 +114,5 @@ void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32
             (*length)++;
         }
     }
+    fseek(fp, 0, SEEK_END);
 }

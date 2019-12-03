@@ -87,7 +87,7 @@ static int handle_join(char *message, int size);
 static int handle_append(char *message, int msg_size);
 static int handle_like_unlike(char *message, char event_type);
 static int handle_history();
-static int handle_membership_status();
+static int handle_membership_status(char *message, int msg_size);
 
 static int send_anti_entropy_to_server(u_int32_t server_id);
 static int create_new_chatroom(char *chatroom, int no_create_file);
@@ -237,9 +237,23 @@ static void Read_message()
 		}
 		if (Is_reg_memb_mess(service_type))
 		{
-			int join = 0;
-			if (Is_caused_join_mess(service_type))
+			int join = 0, i;
+            u_int32_t server_id;
+	        char garbage[20];
+			if (Is_caused_join_mess(service_type)){
 				join = 1;
+                if (!strncmp(sender, "chat_servers", 12))
+                {
+                    for(i=0;i < num_groups; i++)
+                    {
+                        sscanf(&target_groups[i][0] + 1, "%d%s", &server_id, garbage);
+                        current_session.membership[server_id-1] = 1;
+                        log_debug("%s is in that group", &target_groups[i][0]);
+                    }
+
+                }
+            }
+            
 			handle_membership_change(target_groups, num_groups, join, memb_info.changed_member, sender);
 		}
 		else if (Is_transition_mess(service_type))
@@ -316,7 +330,7 @@ static int parse(char *message, int size, int num_groups)
 		handle_like_unlike(message, TYPE_UNLIKE);
 		break;
 	case TYPE_MEMBERSHIP_STATUS:
-		handle_membership_status();
+		handle_membership_status(message, size);
 		break;
 	case TYPE_ANTY_ENTROPY:
 		handle_anti_entropy(message, size);
@@ -327,6 +341,8 @@ static int parse(char *message, int size, int num_groups)
 	case TYPE_PARTICIPANT_UPDATE:
 		handle_participant_update(message, size);
 		break;
+    case TYPE_MEMBERSHIP_STATUS_RESPONSE:
+        break;
 	default:
 		log_error("invalid message type %c", type);
 		break;
@@ -385,7 +401,7 @@ static void create_chatroom_from_logs()
     ssize_t read;
 	char chatroom_name[20];
     Message m;
-    u_int32_t index;
+    u_int32_t index, server_id;
 	directory = opendir(".");
     if (directory == NULL) {
         log_error("error opening base directory");
@@ -396,7 +412,9 @@ static void create_chatroom_from_logs()
         log_debug("filename: %s\n", file->d_name);
 		if(strcmp("chatroom", get_filename_ext(file->d_name)) == 0)
 		{
-			sscanf(file->d_name, "%[^.].chatroom", chatroom_name);
+			sscanf(file->d_name, "%d_%[^.].chatroom", &server_id, chatroom_name);
+            if(server_id != current_session.server_id)
+                continue;
             index = find_chatroom_index(chatroom_name);
             if (index == -1)
 		        index = create_new_chatroom(chatroom_name, 1);
@@ -437,7 +455,7 @@ static int initialize()
 	current_session.num_of_chatrooms = 0;
 	for (i = 0; i < 5; i++)
 	{
-		current_session.membership[i] = 1;
+		current_session.membership[i] = 0;
 		for (j = 0; j < 5; j++)
 		{
 			current_session.lamport_counters[i][j] = 0;
@@ -830,9 +848,32 @@ static int handle_history()
 	// TODO: ...
 	return 0;
 }
-static int handle_membership_status()
+static int handle_membership_status(char *message, int msg_size)
 {
-	// TODO: ...
+	int i;
+	char clientGroup[30];
+	char response[NUM_SERVERS*4+5];
+    u_int32_t username_length;
+	u_int32_t size = 0;
+	char username[20];
+    int offset = 5;
+    u_int32_t num_servers;
+
+	memcpy(&username_length, message + 1, 4);
+	memcpy(username, message + 5, username_length);
+	username[username_length] = 0;
+	log_debug("handling membership status message from %s", username);
+	num_servers = NUM_SERVERS;
+	response[0] = TYPE_MEMBERSHIP_STATUS_RESPONSE;
+    memcpy(response + 1, &num_servers, 4);
+	sprintf(clientGroup, "%s_%d", username, current_session.server_id);
+	for (i = 0; i < NUM_SERVERS; i++)
+	{
+		memcpy(response + offset, &current_session.membership[i], 4);
+		offset += 4;
+	}
+	log_debug("sending membership status response: %d %d %d %d %d ", current_session.membership[0],current_session.membership[1],current_session.membership[2],current_session.membership[3],current_session.membership[4]);
+	SP_multicast(Mbox, AGREED_MESS, clientGroup, 2, offset + 5, response);	
 	return 0;
 }
 
@@ -861,6 +902,9 @@ static int handle_server_update(char *messsage, int size)
 	current_session.lamport_counters[current_session.server_id - 1][server_id - 1] = e.lamportCounter;
 	current_session.lamport_counters[sender_id - 1][server_id - 1] = e.lamportCounter;
 	chatroom_index = find_chatroom_index(e.chatroom);
+    if(chatroom_index == -1){
+        chatroom_index = create_new_chatroom(e.chatroom, 0);
+    }
 	switch (e.eventType)
 	{
 	case TYPE_APPEND:
@@ -907,31 +951,46 @@ static int i_am_responsible_to_resend_data(u_int32_t server_id)
 	{
 		int i;
 		u_int32_t min_lc = current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1];
+        log_debug("min lc for myself is %d", min_lc);
 		for(i = NUM_SERVERS-1; i >= 0; i--)
-			if (current_session.membership[i] && current_session.lamport_counters[i][server_id - 1] < min_lc)
+			if (current_session.membership[i] && current_session.lamport_counters[i][server_id - 1] < min_lc){
 				min_lc = current_session.lamport_counters[i][server_id - 1];
-		if(min_lc < current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1])
+                log_debug("min lc changed to %d in row %d", min_lc, i);
+            }
+		if(min_lc < current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1]){
+            log_debug("I am responsible for missing data from myself. attempting to send from lc %d...", min_lc);
 			resend_data(current_session.server_id, min_lc);
+        }
 		return 1;	// my own data
 	}
-	else
+	else if (current_session.membership[server_id - 1])
+    {
+        return 0;   // because the responsible server is already in the membership
+    }
+    else
 	{
 		int i;
 		u_int32_t max_lc = 0;
 		u_int32_t min_lc = -1;
 		u_int32_t max_server = 0;
 		for(i = NUM_SERVERS-1; i >= 0; i--){
+            log_debug("server %d membership = %d", i+1, current_session.membership[i]);
 			if(current_session.membership[i]){
 				if (current_session.lamport_counters[i][server_id - 1] >= max_lc){
 					max_lc = current_session.lamport_counters[i][server_id - 1];
 					max_server = i+1;
+                    log_debug("changing max lc to %d for server %d", max_lc, max_server);
 				}
-				if(current_session.lamport_counters[i][server_id - 1] < min_lc)
+				if(current_session.lamport_counters[i][server_id - 1] < min_lc){
 					min_lc = current_session.lamport_counters[i][server_id - 1];
+                    log_debug("min lc changed to %d in row %d", min_lc, i);
+                }
 			}
 		}
-		if(min_lc < max_lc && max_server == current_session.server_id)
-			resend_data(current_session.server_id, min_lc);
+		if(min_lc < max_lc && max_server == current_session.server_id){
+            log_debug("I am responsible for missing data from %d. attempting to send from lc %d...",server_id, min_lc);
+			resend_data(server_id, min_lc);
+        }
 		return 1;	// my own data
 	}
 	return 0;
@@ -969,12 +1028,7 @@ static int handle_anti_entropy(char *messsage, int size)
 	}
 	// But, if the server is behind, and I'm responsible, resend the data.
 	for (i = 0; i < NUM_SERVERS; i++)
-	{
-		if (i_am_responsible_to_resend_data(i+1)){
-			log_debug("I am responsible for missing data. attempting to send...");
-			resend_data(j+1, lamport_ctr);	// TODO: do not send the same data more than one time
-		}
-	}
+	    i_am_responsible_to_resend_data(i+1);
 
 	if(outdated){
 		log_debug("resending Anti-entropy to all");
@@ -1034,8 +1088,8 @@ static int handle_membership_change(char **target_groups, int num_groups, int is
 		{
 			sscanf(target_member + 1, "%d%s", &server_id, garbage);
 			log_warn("Server %s with id %d  joined the membership with %d members ", target_member, server_id, num_groups);
-			if(server_id != current_session.server_id)
-				handle_server_join(server_id);
+			//if(server_id != current_session.server_id)
+			handle_server_join(server_id);
 		}
 		else
 		{
