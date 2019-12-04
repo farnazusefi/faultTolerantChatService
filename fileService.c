@@ -105,7 +105,7 @@ void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32
         log_debug("Retrieved line of length %zu from server %d log file:\n", read, server_id);
         log_debug("%s", line);
         if(strlen(line) < 2)    // reached \n
-            break;
+            continue;
         parseLineInLogFile(line, &e);
         if(e.lamportCounter > lamport_counter)
         {
