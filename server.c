@@ -9,6 +9,7 @@
 
 #include "log.h"
 #include "fileService.h"
+#include "list.h"
 
 #include "include/HashSet/src/hash_set.h"
 #include "include/c_hashmap/hashmap.h"
@@ -69,9 +70,9 @@ typedef struct Session_t
 	u_int32_t lamport_counters[5][5];  // Stores the last received lamport counter from each server according to each server's view
 	u_int32_t lamport_counter;
 	enum State state;
-	struct Node *unprocessed_update_start;
+	Node *unprocessed_update_start;
 	u_int32_t unprocessed_updates_count;
-	u_int32_t processed_lamport_counters[5]
+	u_int32_t processed_lamport_counters[5];
 } Session;
 
 ///////////////////////// Global Variables //////////////////////////////////////////////////////
@@ -102,6 +103,7 @@ static int handle_like_unlike(char *message, char event_type);
 static int handle_history();
 static int handle_membership_status(char *message, int msg_size);
 
+static int handle_unprocessed_updates();
 static int check_primary_conditions();
 static int send_anti_entropy_to_server(u_int32_t server_id);
 static int create_new_chatroom(char *chatroom, int no_create_file);
@@ -1004,9 +1006,13 @@ static int process_log_files()
 	u_int32_t data_available[NUM_SERVERS];
 	u_int32_t min_lc = -1, min_server_id = 0;
 	int i;
+    log_debug("processing log files");
 	while(log_remaining())
 	{
 		retrieve_line_from_logs(e, data_available, NUM_SERVERS, current_session.processed_lamport_counters);
+        log_debug("retrieving log lines from files %d %d %d %d %d", data_available[0],data_available[1],data_available[2],data_available[3],data_available[4]);
+        min_lc = -1;
+        min_server_id = 0;
 		for(i = 0;i<NUM_SERVERS;i++)
 		{
 			if(data_available[i])
@@ -1018,9 +1024,10 @@ static int process_log_files()
 				}
 			}
 		}
-
+        log_debug("minimum log line is for server %d with lc %d", min_server_id, e[min_server_id-1].lamportCounter); 
 		process_log_event(e[min_server_id - 1], min_server_id);
 	}
+    return 0;
 }
 
 static int handle_server_update(char *messsage, int size)
@@ -1049,6 +1056,7 @@ static int handle_server_update(char *messsage, int size)
 
 	if(current_session.state == STATE_RECONCILING){
 		if(check_primary_conditions()){
+            log_info("returning to primary state");
 			current_session.state = STATE_PRIMARY;
 			process_log_files();	// TODO
 			handle_unprocessed_updates();
@@ -1137,14 +1145,17 @@ static int check_primary_conditions()
 	int i, j;
 	for(i = 0; i < NUM_SERVERS; i++)
 	{
-		if(!current_session.membership[i] && i == current_session.server_id - 1)
+		if(!current_session.membership[i] || i == current_session.server_id - 1)
 			continue;
 		for(j = 0;j < NUM_SERVERS;j++)
 		{
-			if(current_session.lamport_counters[i][j] != current_session.lamport_counters[current_session.server_id - 1][j])
+			if(current_session.lamport_counters[i][j] != current_session.lamport_counters[current_session.server_id - 1][j]){
+                log_debug("check primary condisions failed. last recived matrix i=%d j=%d lc=%d , my value=%d", i, j, current_session.lamport_counters[i][j], current_session.lamport_counters[current_session.server_id - 1][j]);
 				return 0;
+            }
 		}
 	}
+    log_debug("Check primary conditions successful");
 	return 1;
 }
 
@@ -1210,7 +1221,9 @@ static int handle_anti_entropy(char *messsage, int size)
 		log_debug("resending Anti-entropy to all");
 		send_anti_entropy_to_server(0);
 	}
-	if(updated && check_primary_conditions()){
+    log_debug("updated = %d (matrix updated)", updated);
+	if(check_primary_conditions()){
+        log_info("returning to PRIMARY state");
 		current_session.state = STATE_PRIMARY;
 		handle_unprocessed_updates();
 	}
@@ -1239,7 +1252,7 @@ static int send_anti_entropy_to_server(u_int32_t server_id)
 static void handle_server_join(u_int32_t server_id)
 {
     log_debug("handling server join %d", server_id);
-	current_session.membership[server_id - 1] = 1;
+	//current_session.membership[server_id - 1] = 1;
 	current_session.state = STATE_RECONCILING;
 	send_anti_entropy_to_server(server_id);
 }
@@ -1270,7 +1283,9 @@ static int handle_membership_change(char **target_groups, int num_groups, int is
 			sscanf(target_member + 1, "%d%s", &server_id, garbage);
 			log_warn("Server %s with id %d  joined the membership with %d members ", target_member, server_id, num_groups);
 			//if(server_id != current_session.server_id)
-			handle_server_join(server_id);
+            current_session.membership[server_id - 1] = 1;
+            if(num_groups > 1)
+			    handle_server_join(server_id);
 		}
 		else
 		{

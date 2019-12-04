@@ -4,7 +4,7 @@ typedef struct Node_t
 { 
     char mess[102400];
     int length;
-    Node *next; 
+    struct Node_t *next; 
 } Node; 
 
 
@@ -22,8 +22,7 @@ void push(Node* head_ref, char *new_data, size_t data_size)
     current->next->next = NULL;
 }
 
-int pop(Node ** head, char *returned_message, int *returned_length) {
-    int retval = -1;
+int pop(Node ** head, char *returned_message, int *returned_length) { 
     Node *next_node = NULL;
 
     if (*head == NULL) {
