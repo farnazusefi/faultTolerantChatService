@@ -1030,9 +1030,9 @@ static int process_log_files()
 
 static int handle_server_update(char *messsage, int size)
 {
-	u_int32_t sender_id, server_id, log_length, chatroom_index;
+	u_int32_t sender_id, server_id, log_length;
 	logEvent e;
-	char username[20], message_text[80];
+	//char username[20], message_text[80];
 	memcpy(&sender_id, messsage + 1, 4);
 	memcpy(&server_id, messsage + 5, 4);
 	memcpy(&log_length, messsage + 9, 4);
@@ -1170,6 +1170,7 @@ static int handle_unprocessed_updates()
 		}
 		
 	}
+    return 0;
 }
 
 static int handle_anti_entropy(char *messsage, int size)
@@ -1292,7 +1293,8 @@ static int handle_membership_change(char **target_groups, int num_groups, int is
 			sscanf(target_member + 1, "%d%s", &server_id, garbage);
 			log_warn("Server %s with id %d left the membership with %d members", target_member, server_id, num_groups);
 			// remove chat participants of this server from my lists
-			handle_server_leave(server_id);
+            if(server_id > 0 && server_id <= NUM_SERVERS)
+    			handle_server_leave(server_id);
 		}
 	}
 	else if (!strncmp(target_group, "server", 6))
