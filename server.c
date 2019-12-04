@@ -704,9 +704,7 @@ static int handle_join(char *message, int size)
 
 	hash_set_insert(&current_session.chatrooms[chatroom_index].participants[current_session.server_id - 1], username, strlen(username));
 	current_session.chatrooms[chatroom_index].num_of_participants[current_session.server_id - 1]++;
-	log_warn("1111");
 	*old_idx = chatroom_index;
-	log_warn("22222");
 	ret = hashmap_put(current_session.clients, username, old_idx);
 
 	if (ret != MAP_OK)
