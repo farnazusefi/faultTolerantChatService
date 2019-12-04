@@ -1274,7 +1274,7 @@ static int handle_membership_change(char **target_groups, int num_groups, int is
 	u_int32_t server_id;
 	char client[20];
 	char garbage[20];
-	int ret;
+	int ret, i, cnt = 0;
 	int32_t *idx = (int32_t *)malloc(sizeof(int32_t));
 	if (!strncmp(target_group, "chat_servers", 12))
 	{
@@ -1284,7 +1284,9 @@ static int handle_membership_change(char **target_groups, int num_groups, int is
 			log_warn("Server %s with id %d  joined the membership with %d members ", target_member, server_id, num_groups);
 			//if(server_id != current_session.server_id)
             current_session.membership[server_id - 1] = 1;
-            if(num_groups > 1)
+			for(i = 0;i < NUM_SERVERS;i++)
+				cnt+=current_session.membership[i];
+            if(cnt > 1)
 			    handle_server_join(server_id);
 		}
 		else
