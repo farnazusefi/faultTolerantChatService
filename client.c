@@ -469,7 +469,7 @@ static int sendAppendRequestToServer(char *chatroom, char *message) {
 	int c_length = strlen(chatroom);
 	int m_length = strlen(message);
 	char payload[c_length + m_length + 8];
-	log_debug("sending append request to server for chatroom = %s, message = %s", chatroom, message);
+	log_debug("sending append request to server for chatroom = %s (%d), message = %s (%d)", chatroom, c_length, message, m_length);
 	memcpy(payload, &c_length, 4);
 	memcpy(payload + 4, chatroom, c_length);
 	memcpy(payload + 4 + c_length, &m_length, 4);
@@ -644,7 +644,7 @@ static void display_disconnection_to_user()
 
 static int handle_membership_message(char *sender, int num_groups, membership_info *mem_info, int service_type)
 {
-	char username[20], garbage[20];
+	char username[20], garbage[20], chatroom_group_name[80];
 	int serverID;
 	log_debug("Handling membership change %s", mem_info->changed_member);
 	sscanf(sender, "%[^_]_%d", username, &serverID);
@@ -657,6 +657,14 @@ static int handle_membership_message(char *sender, int num_groups, membership_in
 		{
 			// server is disconnected
             log_debug("caused leave or disconnect");
+			if(current_session.is_joined)
+			{
+				sprintf(chatroom_group_name, "CHATROOM_%s_%d", current_session.chatroom, current_session.connected_server);
+				log_debug("leaving Spread group %s", chatroom_group_name);
+				ret = SP_leave(Mbox, chatroom_group_name);
+				if (ret < 0)
+					SP_error(ret);
+			}
 			current_session.connected_server = 0;
 			current_session.is_connected = 0;
 			current_session.is_joined = 0;

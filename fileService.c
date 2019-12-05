@@ -98,8 +98,8 @@ void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32
     size_t len = 0;
     ssize_t read;
     logEvent e;
-    int offset = 0;
     *length = 0;
+    memset(&e, 0, sizeof(e));
     rewind(fp);
     while ((read = getline(&line, &len, fp)) != -1) {
         log_debug("Retrieved line of length %zu from server %d log file:\n", read, server_id);
@@ -109,8 +109,11 @@ void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32
         parseLineInLogFile(line, &e);
         if(e.lamportCounter > lamport_counter)
         {
-            memcpy(logs + offset, &e, sizeof(e));
-            offset+= sizeof(e);
+            logs[*length].lamportCounter = e.lamportCounter;
+            logs[*length].eventType = e.eventType;
+            memcpy(logs[*length].payload, e.payload, 100);
+            memcpy(logs[*length].additionalInfo, e.additionalInfo, 20);
+            memcpy(logs[*length].chatroom, e.chatroom, 20);
             (*length)++;
         }
     }
@@ -153,8 +156,8 @@ void retrieve_line_from_logs(logEvent *e, u_int32_t *available_data, u_int32_t n
         available_data[i] = 0;
         while ((read = getline(&line, &len, fp)) != -1)
         {
-            if(strlen(line) < 2)    // reached \n
-                break;
+            if(strlen(line) < 2)    // reached \n or empty line
+                continue;
             parseLineInLogFile(line, &parsed_e);
             if(parsed_e.lamportCounter > last_processed_counters[i]){
                 memcpy(&e[i], &parsed_e, sizeof(parsed_e));

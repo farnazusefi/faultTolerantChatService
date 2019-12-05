@@ -19,7 +19,7 @@
 #define MAX_MEMBERS 100
 #define MAX_PARTICIPANTS 100
 #define MAX_CHATROOMS 100
-#define RECREATE_FILES_IN_STARTUP 1
+#define RECREATE_FILES_IN_STARTUP 0
 #define NUM_SERVERS 5
 #define MAX_HISTORY_MESSAGES 100
 
@@ -97,11 +97,14 @@ static int initialize();
 
 //static int handle_disconnect(char *username);
 static int handle_connect(char *message, u_int32_t size);
+static void handle_server_join(u_int32_t server_id);
+static void handle_server_leave(u_int32_t server_id);
 static int handle_join(char *message, int size);
 static int handle_append(char *message, int msg_size);
 static int handle_like_unlike(char *message, char event_type);
 static int handle_history();
 static int handle_membership_status(char *message, int msg_size);
+static int process_log_files(u_int32_t startup);
 
 static int handle_unprocessed_updates();
 static int check_primary_conditions();
@@ -194,7 +197,7 @@ int main(int argc, char *argv[])
 	E_init();
 	initialize();
 
-	E_attach_fd(Mbox, READ_FD, Read_message, 0, NULL, HIGH_PRIORITY);
+	E_attach_fd(Mbox, READ_FD, Read_message, 0, NULL, LOW_PRIORITY);
 
 	E_handle_events();
 
@@ -243,7 +246,10 @@ static void Read_message()
 	}
 	else if (Is_membership_mess(service_type))
 	{
-		log_debug("Received membership message.");
+        int join = 0, i, cnt = 0;
+        u_int32_t server_id;
+        char garbage[20];
+		log_debug("Received membership of %s message for group %s.",memb_info.changed_member,  sender);
 		ret = SP_get_memb_info(mess, service_type, &memb_info);
 		if (ret < 0)
 		{
@@ -251,26 +257,10 @@ static void Read_message()
 			SP_error(ret);
 			exit(1);
 		}
-		if (Is_reg_memb_mess(service_type))
+		
+        if (Is_reg_memb_mess(service_type))
 		{
-			int join = 0, i;
-            u_int32_t server_id;
-	        char garbage[20];
-			if (Is_caused_join_mess(service_type)){
-				join = 1;
-                if (!strncmp(sender, "chat_servers", 12))
-                {
-                    for(i=0;i < num_groups; i++)
-                    {
-                        sscanf(&target_groups[i][0] + 1, "%d%s", &server_id, garbage);
-                        current_session.membership[server_id-1] = 1;
-                        log_debug("%s is in that group", &target_groups[i][0]);
-                    }
-
-                }
-            }
-            
-			handle_membership_change(target_groups, num_groups, join, memb_info.changed_member, sender);
+            log_info("received REGULAR membership for group %s\n", sender);
 		}
 		else if (Is_transition_mess(service_type))
 		{
@@ -282,6 +272,46 @@ static void Read_message()
 		}
 		else
 			log_info("received incorrecty membership message of type 0x%x\n", service_type);
+
+    
+		// server_group	handler
+		if (!strncmp(sender, "chat_servers", 12))
+		{
+			u_int32_t new_memberships[NUM_SERVERS];
+			memset(new_memberships, 0, NUM_SERVERS*4);
+			for(i=0;i < num_groups; i++)
+			{
+				sscanf(&target_groups[i][0] + 1, "%d%s", &server_id, garbage);
+				new_memberships[server_id -1] = 1;
+				log_debug("%s is in that group", &target_groups[i][0]);
+			}
+			for(i=0; i< NUM_SERVERS; i++)
+			{
+				if(!current_session.membership[i] && new_memberships[i]){
+					join = 1;
+					log_warn("Server with id %d  joined the membership with %d members ", i+1, num_groups);
+				}
+				else if(current_session.membership[i] && !new_memberships[i]){
+					log_warn("Server with id %d left the membership with %d members", i+1, num_groups);
+					handle_server_leave(i+1);
+				}
+				if(new_memberships[i])
+					cnt++;
+				current_session.membership[i] = new_memberships[i];
+			}
+			if(join && cnt > 1)
+				handle_server_join(0);
+		}
+		else if (!strncmp(sender, "server", 6))
+			log_debug("It is me joining my group!");
+		else	
+		{
+			join = 0;
+			if(Is_caused_join_mess(service_type))
+				join = 1;
+        	handle_membership_change(target_groups, num_groups, join, memb_info.changed_member, sender);
+		}
+        
 	}
 	else if (Is_reject_mess(service_type))
 	{
@@ -407,7 +437,7 @@ static void rebuild_lts_data(u_int32_t index)
 	}
 }
 
-static void create_chatroom_from_logs()
+static void create_chatroom_from_files()
 {
 	DIR *directory;
 	struct dirent* file;
@@ -452,8 +482,7 @@ static void create_chatroom_from_logs()
 
 static void update_chatroom_data_based_on_log_files()
 {
-	// read the log files
-	// if line has more reent data than last LTS of chatroom, update it
+	process_log_files(1);	// TODO: might need more work
 }
 
 static int initialize()
@@ -463,9 +492,6 @@ static int initialize()
 	char server_group_name[10];
 	log_info("Server Initializing");
 	create_log_files(current_session.server_id, 5, RECREATE_FILES_IN_STARTUP, fds);
-
-	create_chatroom_from_logs();
-	update_chatroom_data_based_on_log_files();
 
 	current_session.connected_clients = 0;
 	current_session.num_of_chatrooms = 0;
@@ -482,6 +508,8 @@ static int initialize()
 			current_session.lamport_counters[i][j] = 0;
 		}
 	}
+	create_chatroom_from_files();
+	update_chatroom_data_based_on_log_files();
 	current_session.clients = hashmap_new();
 	log_info("Joining servers group");
 	ret = SP_join(Mbox, "chat_servers");
@@ -536,13 +564,17 @@ static int send_chatroom_update_to_clients(char *chatroom, int index)
 	char chatroomGroup[30];
 	char message[1400];
 	char *username;
+	log_debug("send_chatroom_update_to_clients 111");
 	hash_set_st *participants = hash_set_init(chksum);
 	hash_set_it *it;
 	u_int32_t num_participants, username_size;
 	int offset = 5;
 	message[0] = TYPE_CLIENT_UPDATE;
+	log_debug("send_chatroom_update_to_clients 222");
 	sprintf(chatroomGroup, "CHATROOM_%s_%d", chatroom, current_session.server_id);
+	log_debug("send_chatroom_update_to_clients %s 333", chatroomGroup);
 	num_participants = aggregate_participants(participants, index);
+	log_debug("send_chatroom_update_to_clients %d 444", num_participants);
 	memcpy(message + 1, &num_participants, 4);
 	it = it_init(participants);
 	for (j = 0; j < num_participants; j++)
@@ -734,6 +766,20 @@ static int send_log_update_to_servers(u_int32_t server_id, u_int32_t line_length
 	return 0;
 }
 
+void print_hex(const char *string)
+{
+        unsigned char *p = (unsigned char *) string;
+		int i;
+        for (i=0; i < strlen(string); ++i) {
+                if (! (i % 16) && i)
+                        printf("\n");
+
+                printf("0x%02x ", p[i]);
+        }
+        printf("\n\n");
+		fflush(stdout);
+}
+
 static int handle_append(char *message, int msg_size)
 {
 	u_int32_t username_length, chatroom_length, payload_length, offset;
@@ -741,7 +787,9 @@ static int handle_append(char *message, int msg_size)
 	char username[20], chatroom[20], payload[80];
 	int chatroom_index;
 	logEvent e;
+	print_hex(message);
 	memset(&e, 0, sizeof(e));
+	memset(payload, 0, 80);
 	memcpy(&username_length, message + 1, 4);
 	memcpy(username, message + 5, username_length);
 	memcpy(&chatroom_length, message + 5 + username_length, 4);
@@ -764,8 +812,11 @@ static int handle_append(char *message, int msg_size)
 		return 0;
 	}
 	offset = username_length + chatroom_length + 9;
+	log_debug("attempting to read payload length from message");
 	memcpy(&payload_length, message + offset, 4);
+	log_debug(" payload length is %d", payload_length);
 	memcpy(payload, message + offset + 4, payload_length);
+	log_debug(" payload is %s", payload);
 	payload[payload_length] = 0;
 	e.eventType = TYPE_APPEND;
 	e.lamportCounter = ++current_session.lamport_counter;
@@ -960,11 +1011,14 @@ static int handle_membership_status(char *message, int msg_size)
 
 //////////////////////////   Server Event Handlers ////////////////////////////////////////////////////
 
-static int log_remaining()
+static int log_remaining(u_int32_t startup)
 {
 	int i;
+	if (startup)
+		return 1;
 	for(i = 0;i< NUM_SERVERS;i++)
 	{
+		log_debug("in log remaining? server id = %d, processed lc = %d, my received lc = %d",i+1, current_session.processed_lamport_counters[i], current_session.lamport_counters[current_session.server_id - 1][i]);
 		if(current_session.processed_lamport_counters[i] < current_session.lamport_counters[current_session.server_id - 1][i])
 			return 1;
 	}
@@ -994,23 +1048,43 @@ static int process_log_event(logEvent e, u_int32_t server_id)
 		log_error("Invalid event type %c", e.eventType);
 		break;
 	}
+	log_debug("setting processed lts to %d, %d ", server_id, e.lamportCounter);
 	current_session.processed_lamport_counters[server_id - 1] = e.lamportCounter;
+	if(e.lamportCounter > current_session.lamport_counters[current_session.server_id - 1][server_id - 1]){
+		current_session.lamport_counters[current_session.server_id - 1][server_id - 1] = e.lamportCounter;
+		current_session.lamport_counter = e.lamportCounter;
+	}
+	
 	return 0;
 }
 
-static int process_log_files()
+static int log_line_available(u_int32_t *data_available)
+{
+	int i;
+	for(i =0;i < NUM_SERVERS;i++)
+	{
+		if(data_available[i])
+			return 1;
+	}
+	return 0;
+}
+
+static int process_log_files(u_int32_t startup)
 {
 	logEvent e[NUM_SERVERS];
 	u_int32_t data_available[NUM_SERVERS];
 	u_int32_t min_lc = -1, min_server_id = 0;
 	int i;
     log_debug("processing log files");
-	while(log_remaining())
+	while(log_remaining(startup))
 	{
+		min_lc = -1;
+        min_server_id = 0;
 		retrieve_line_from_logs(e, data_available, NUM_SERVERS, current_session.processed_lamport_counters);
         log_debug("retrieving log lines from files %d %d %d %d %d", data_available[0],data_available[1],data_available[2],data_available[3],data_available[4]);
-        min_lc = -1;
-        min_server_id = 0;
+		if(!log_line_available(data_available))
+			break;
+
 		for(i = 0;i<NUM_SERVERS;i++)
 		{
 			if(data_available[i])
@@ -1022,8 +1096,9 @@ static int process_log_files()
 				}
 			}
 		}
-        log_debug("minimum log line is for server %d with lc %d", min_server_id, e[min_server_id-1].lamportCounter); 
-		process_log_event(e[min_server_id - 1], min_server_id);
+        log_debug("minimum log line is for server %d with lc %d", min_server_id, e[min_server_id-1].lamportCounter);
+		if(min_server_id)
+			process_log_event(e[min_server_id - 1], min_server_id);
 	}
     return 0;
 }
@@ -1038,9 +1113,10 @@ static int handle_server_update(char *messsage, int size)
 	memcpy(&log_length, messsage + 9, 4);
 	if (server_id == current_session.server_id)
 		return 0;
-	char line[log_length];
+	char line[80];
+	memset(line, 0, 80);
 	memcpy(&line, messsage + 13, log_length);
-	log_debug("handling server update (of server %d) from server %d. update line is: %s", server_id, sender_id, line);
+	log_debug("handling server update (of server %d) from server %d. update line is: %s of length %d", server_id, sender_id, line, log_length);
 	parseLineInLogFile(line, &e);
 	if(e.lamportCounter <= current_session.lamport_counters[current_session.server_id - 1][server_id - 1]){
 		log_warn("received duplicate data. ignoring");
@@ -1056,7 +1132,7 @@ static int handle_server_update(char *messsage, int size)
 		if(check_primary_conditions()){
             log_info("returning to primary state");
 			current_session.state = STATE_PRIMARY;
-			process_log_files();	// TODO
+			process_log_files(0);	// TODO
 			handle_unprocessed_updates();
 		}
 		return 0;
@@ -1071,8 +1147,9 @@ static int resend_data(u_int32_t server_id, u_int32_t lamport_counter)
 	char username[20];
 	u_int32_t size = (13 + 1300);
 	char buffer[size];
-	logEvent logs[100]; // TODO: maybe more?
+	logEvent logs[100]; // TODO: maybe more? / maybe dynamic
 	u_int32_t length = 0;
+	memset(logs, 0, 100*sizeof(logEvent));
 	get_logs_newer_than(server_id, lamport_counter, &length, logs);
 	log_debug("getting newer data than LTS %d,%d from log file, totalling %d", server_id, lamport_counter, length);
 	for(i = 0; i < length; i++)
@@ -1148,7 +1225,7 @@ static int check_primary_conditions()
 		for(j = 0;j < NUM_SERVERS;j++)
 		{
 			if(current_session.lamport_counters[i][j] != current_session.lamport_counters[current_session.server_id - 1][j]){
-                log_debug("check primary condisions failed. last recived matrix i=%d j=%d lc=%d , my value=%d", i, j, current_session.lamport_counters[i][j], current_session.lamport_counters[current_session.server_id - 1][j]);
+                log_debug("check primary conditions failed. last recived matrix i=%d j=%d lc=%d , my value=%d", i, j, current_session.lamport_counters[i][j], current_session.lamport_counters[current_session.server_id - 1][j]);
 				return 0;
             }
 		}
@@ -1187,6 +1264,7 @@ static int handle_anti_entropy(char *messsage, int size)
 		{
 			memcpy(&lamport_ctr, messsage + offset, 4);
 			offset += 4;
+			log_debug("anti entropy: lts for row %d col %d is %d", i,j, lamport_ctr);
 			if (i == current_session.server_id - 1)
 			{
 				// Don't update data about myself. I know me better.
@@ -1196,12 +1274,12 @@ static int handle_anti_entropy(char *messsage, int size)
 			}
 			else
 			{
-				if (i == sender_id - 1){
+				if (i == sender_id - 1){ // Trust everything it said about itself.
 					if(lamport_ctr > current_session.lamport_counters[i][j]){
 						current_session.lamport_counters[i][j] = lamport_ctr;
 						updated = 1;
 					}
-				}					// Trust everything it said about itself.
+				}					
 				else if(lamport_ctr > current_session.lamport_counters[i][j]) // only update these rows if its data is more recent about others	
 				{
 					current_session.lamport_counters[i][j] = lamport_ctr;
@@ -1224,6 +1302,7 @@ static int handle_anti_entropy(char *messsage, int size)
 	if(check_primary_conditions()){
         log_info("returning to PRIMARY state");
 		current_session.state = STATE_PRIMARY;
+		process_log_files(0);
 		handle_unprocessed_updates();
 	}
 
@@ -1235,22 +1314,24 @@ static int send_anti_entropy_to_server(u_int32_t server_id)
 	u_int32_t size = NUM_SERVERS * NUM_SERVERS * 4;
 	char payload[size];
 	int i, j, offset = 0;
+	log_debug("sending Anti entropy to servers:");
 	for (i = 0; i < NUM_SERVERS; i++)
 	{
 		for (j = 0; j < NUM_SERVERS; j++)
 		{
 			memcpy(payload + offset, &current_session.lamport_counters[i][j], 4);
 			offset += 4;
+			
 		}
+		log_debug("Row %d = %d %d %d %d %d", i+1, current_session.lamport_counters[i][0], current_session.lamport_counters[i][1], current_session.lamport_counters[i][2], current_session.lamport_counters[i][3], current_session.lamport_counters[i][4]);
 	}
-	log_debug("sending Anti entropy to servers");
 	send_to_servers(TYPE_ANTY_ENTROPY, payload, size);
 	return 0;
 }
 
 static void handle_server_join(u_int32_t server_id)
 {
-    log_debug("handling server join %d", server_id);
+    log_debug("handling server join");
 	//current_session.membership[server_id - 1] = 1;
 	current_session.state = STATE_RECONCILING;
 	send_anti_entropy_to_server(server_id);
@@ -1261,9 +1342,12 @@ static void handle_server_leave(u_int32_t server_id)
 	int i;
 	for (i = 0; i < current_session.num_of_chatrooms; i++)
 	{
+		log_debug("chatroom %d 1111", i);
 		hash_set_clear(&current_session.chatrooms[i].participants[server_id - 1]);
-		current_session.chatrooms[i].num_of_participants[i] = 0;
+		log_debug("chatroom %d 2222", i);
+		current_session.chatrooms[i].num_of_participants[server_id -1] = 0;
 		send_chatroom_update_to_clients(current_session.chatrooms[i].name, i);
+		log_debug("chatroom %d 333333", i);
 	}
 	current_session.membership[server_id - 1] = 0;
 }
@@ -1272,51 +1356,24 @@ static int handle_membership_change(char **target_groups, int num_groups, int is
 {
 	u_int32_t server_id;
 	char client[20];
-	char garbage[20];
-	int ret, i, cnt = 0;
+	int ret;
 	int32_t *idx = (int32_t *)malloc(sizeof(int32_t));
-	if (!strncmp(target_group, "chat_servers", 12))
+
+	log_debug("client membership event: target group %s, target_member %s, joined = %d", target_group, target_member, is_joined);
+	sscanf(target_group, "%[^_]_%d", client, &server_id);
+	client[strlen(client)] = 0;
+	log_debug("client is: %s with size: %d", client, strlen(client));
+	if (!is_joined)
 	{
-		if (is_joined)
+		log_debug("map length is %d", hashmap_length(current_session.clients));
+		ret = hashmap_get(current_session.clients, client, (void **)(&idx));
+		if (ret == MAP_OK)
 		{
-			sscanf(target_member + 1, "%d%s", &server_id, garbage);
-			log_warn("Server %s with id %d  joined the membership with %d members ", target_member, server_id, num_groups);
-			//if(server_id != current_session.server_id)
-            current_session.membership[server_id - 1] = 1;
-			for(i = 0;i < NUM_SERVERS;i++)
-				cnt+=current_session.membership[i];
-            if(cnt > 1)
-			    handle_server_join(server_id);
-		}
-		else
-		{
-			sscanf(target_member + 1, "%d%s", &server_id, garbage);
-			log_warn("Server %s with id %d left the membership with %d members", target_member, server_id, num_groups);
-			// remove chat participants of this server from my lists
-            if(server_id > 0 && server_id <= NUM_SERVERS)
-    			handle_server_leave(server_id);
-		}
-	}
-	else if (!strncmp(target_group, "server", 6))
-		log_debug("It is me joining my group!");
-	else
-	{
-		log_debug("client membership event: target group %s, target_member %s, joined = %d", target_group, target_member, is_joined);
-		sscanf(target_group, "%[^_]_%d", client, &server_id);
-		client[strlen(client)] = 0;
-		log_debug("client is: %s with size: %d", client, strlen(client));
-		if (!is_joined)
-		{
-			log_debug("map length is %d", hashmap_length(current_session.clients));
-			ret = hashmap_get(current_session.clients, client, (void **)(&idx));
-			if (ret == MAP_OK)
-			{
-				log_info("My client %s left", client);
-				hashmap_remove(current_session.clients, client);
-				hash_set_remove(&current_session.chatrooms[*idx].participants[current_session.server_id - 1], *idx, current_session.server_id - 1, client);
-				send_participant_change_to_servers(current_session.chatrooms[*idx].name, client, *idx);
-				send_chatroom_update_to_clients(current_session.chatrooms[*idx].name, *idx);
-			}
+			log_info("My client %s left", client);
+			hashmap_remove(current_session.clients, client);
+			hash_set_remove(&current_session.chatrooms[*idx].participants[current_session.server_id - 1], *idx, current_session.server_id - 1, client);
+			send_participant_change_to_servers(current_session.chatrooms[*idx].name, client, *idx);
+			send_chatroom_update_to_clients(current_session.chatrooms[*idx].name, *idx);
 		}
 	}
 	return 0;
