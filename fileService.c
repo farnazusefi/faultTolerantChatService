@@ -133,7 +133,7 @@ void retrieve_chatroom_history(u_int32_t me, char *chatroom, u_int32_t *num_of_m
 	{
 		while ((read = getline(&line, &len, cf)) != -1) {
             if(len < 3)
-                break;
+                continue;
 			parseLineInMessagesFile(line, &messages[*num_of_messages]);
 			log_debug("LTS = %d, %d", messages[*num_of_messages].serverID, messages[*num_of_messages].lamportCounter);
 			(*num_of_messages)++;
