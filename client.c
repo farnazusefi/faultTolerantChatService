@@ -90,6 +90,21 @@ static int handle_membership_status_response(char *message, int size, int num_gr
 
 //////////////////////////   Core Functions  ////////////////////////////////////////////////////
 
+
+void print_hex(const char *string, int len)
+{
+        unsigned char *p = (unsigned char *) string;
+		int i;
+        for (i=0; i < len; ++i) {
+                if (! (i % 16) && i)
+                        printf("\n");
+
+                printf("0x%02x ", p[i]);
+        }
+        printf("\n\n");
+		fflush(stdout);
+}
+
 int main(int argc, char *argv[]) {
 	int ret;
 	int mver, miver, pver;
@@ -374,6 +389,7 @@ static void Usage(int argc, char *argv[]) {
 	char debug_level_str[10];
 	sprintf(User, "user");
 	sprintf(Spread_name, "10330");
+	log_set_level(LOG_INFO);
 	while (--argc > 0) {
 		argv++;
 
@@ -433,15 +449,16 @@ static int initialize() {
 //////////////////////////   User Event Handlers ////////////////////////////////////////////////////
 
 static int sendToServer(char type, char *payload, u_int32_t size) {
-	char serverPrivateGroup[80], message[size + 1];
+	char serverPrivateGroup[80], message[size + 26];
 	int ret;
 	u_int32_t username_length = (u_int32_t) strlen(current_session.username);
-	log_debug("sending to server type = %c", type);
+	log_debug("sending to server type = %c, username length is %d", type, username_length);
 	message[0] = type;
 	memcpy(message + 1, &username_length, 4);
 	memcpy(message + 5, current_session.username, username_length);
 	memcpy(message + 5 + username_length, payload, size);
 	sprintf(serverPrivateGroup, "server%d", current_session.connected_server);
+	print_hex(message, size + username_length + 5);
 	ret = SP_multicast(Mbox, AGREED_MESS, serverPrivateGroup, 2, size + username_length + 5, message);
 	log_debug("multicast returned with %d", ret);
 	return 0;
@@ -480,20 +497,21 @@ static int sendAppendRequestToServer(char *chatroom, char *message) {
 }
 
 static int sendLikeUnlikeRequestToServer(u_int32_t pid, u_int32_t counter, char *chatroom, char type) {
-	int c_length = strlen(chatroom);
-	char payload[c_length + 8];
-	log_debug("sending %c request to server for chatroom = %s, message LTS = %d,%d", type, chatroom, pid, counter);
+	u_int32_t c_length = strlen(chatroom);
+	char payload[c_length + 12];
+	log_debug("sending %c request to server for chatroom = %s (length=%d), message LTS = %d,%d", type, chatroom, c_length, pid, counter);
 	memcpy(payload, &c_length, 4);
 	memcpy(payload + 4, chatroom, c_length);
 	memcpy(payload + 4 + c_length, &pid, 4);
 	memcpy(payload + 8 + c_length, &counter, 4);
-	sendToServer(type, payload, c_length + 8);
+	print_hex(payload, 12 + c_length);
+	sendToServer(type, payload, c_length + 12);
 	return 0;
 
 }
 
 static int sendHistoryRequestToServer(char *chatroom) {
-	int length = strlen(chatroom);
+	u_int32_t length = strlen(chatroom);
 	char payload[length + 4];
 	log_debug("sending history request to server for chatroom = %s", chatroom);
 	memcpy(payload, &length, 4);
@@ -639,7 +657,6 @@ static void display_disconnection_to_user()
 {
 	log_warn("-----------------------\n");
 	log_warn("You are disconnected from the server. Try connecting again.\n");
-	Print_menu();
 }
 
 static int handle_membership_message(char *sender, int num_groups, membership_info *mem_info, int service_type)
@@ -690,7 +707,6 @@ static void displayMessages(){
 	printf("room: %s\n", current_session.chatroom);
 	printf("currentParticipants: ");
 	int i;
-    log_debug("In display messages: %d - %s", current_session.numOfParticipants, current_session.listOfParticipants[0]);
 	for (i=0; i< current_session.numOfParticipants; i++){
 		printf("%s,",current_session.listOfParticipants[i]);
 	}
@@ -702,7 +718,7 @@ static void displayMessages(){
 	}
 	printf("----------\n");
 	fflush(stdout);
-	Print_menu();
+	//Print_menu();
 }
 
 static int handle_update_response(char *message, int size, int num_groups) {
@@ -725,9 +741,9 @@ static int handle_update_response(char *message, int size, int num_groups) {
 	log_debug("Parsed number of messages %d", num_messages);
 	for (i = 0; i < num_messages; i++){
 		memcpy(&current_session.messages[i].serverID, message + offset + pointer, 4);
-        log_debug("server ID = %d", &current_session.messages[i].serverID);
+        log_debug("server ID = %d", current_session.messages[i].serverID);
 		memcpy(&current_session.messages[i].lamportCounter, message + offset + pointer + 4, 4);
-        log_debug("lamport = %d", &current_session.messages[i].lamportCounter);
+        log_debug("lamport = %d", current_session.messages[i].lamportCounter);
       
         memcpy(&username_size, message + offset + pointer + 8, 4); 
         memcpy(current_session.messages[i].userName, message + offset + pointer + 12, username_size);
