@@ -19,7 +19,6 @@ void create_log_files(u_int32_t me, u_int32_t num_of_servers, int recreate, int 
         	log_files[i-1] = fopen(filename, "w+");
         else
         	log_files[i-1] = fopen(filename, "a+");
-        //fds[i-1] = fileno(log_files[i-1]);
     }
 
 }
@@ -46,11 +45,6 @@ void addEventToLogFile(u_int32_t server_id, char *line)
     fflush(f);
 }
 
-void refineLogFile(u_int32_t lc)
-{
-// TODO: TBD
-}
-
 void parseLineInLogFile(char *line, logEvent *e)
 {
     log_debug("line is %s", line);
@@ -73,22 +67,6 @@ void addMessageToChatroomFile(u_int32_t me, char *chatroom, Message m)
 void parseLineInMessagesFile(char *line, Message *m)
 {
     sscanf(line, "%d~%d~%[^\t\n~]~%[^\t\n~]~%s", &m->serverID, &m->lamportCounter, m->userName, m->message, m->additionalInfo);
-}
-
-
-void addLikerToMessage(char *chatroom, u_int32_t server_id, u_int32_t lamportCounter, char *userName)
-{
-    // maybe not nessessary for now
-}
-
-void removeLikerOfMessage(char *chatroom, u_int32_t server_id, u_int32_t lamportCounter, char *userName)
-{
-    // maybe not necessary for now
-}
-
-int get_last_messages(char * chatroom, Message* output, u_int32_t num_of_messages)
-{
- return 0;
 }
 
 void get_logs_newer_than(u_int32_t server_id, u_int32_t lamport_counter, u_int32_t *length, logEvent *logs)

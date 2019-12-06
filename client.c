@@ -1,66 +1,37 @@
-#include "sp.h"
+////////////////// Chat client source code v1.0 //////////////////////////////////////////////////////////
+//
+//	The chat client is responsible to issue basic chat operations (append, like, unlike, join, leave)
+//  to chat servers.
+//	This project was defined as the final course project for Distributed Systems in JHU
+//	Authors: Erfan Sharafzadeh (e.sharafzadeh@jhu.edu)
+//			 Farnaz Yousefi (f.yousefi@jhu.edu)
+//  											12/06/2019
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#include <sys/types.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "log.h"
-#include "fileService.h"
+#include "chat_include.h"
 
-#define int32u unsigned int
-
-#define MAX_MESSLEN     102400
-#define MAX_VSSETS      10
-#define MAX_MEMBERS     100
-#define MAX_PARTICIPANTS 100
-#define MAX_HISTORY_MESSAGES 100
 ///////////////////////// Data Structures   //////////////////////////////////////////////////////
 
-enum MessageType {
-	TYPE_LOGIN = 'u',
-	TYPE_CONNECT = 'c',
-	TYPE_APPEND = 'a',
-	TYPE_JOIN = 'j',
-	TYPE_LIKE = 'l',
-	TYPE_UNLIKE = 'r',
-	TYPE_HISTORY = 'h',
-	TYPE_HISTORY_RESPONSE = 'H',
-	TYPE_MEMBERSHIP_STATUS = 'v',
-	TYPE_CLIENT_UPDATE = 'i',
-	TYPE_MEMBERSHIP_STATUS_RESPONSE = 'm',
-	TYPE_SERVER_UPDATE = 's',
-	TYPE_ANTY_ENTROPY = 'e',
-	TYPE_PARTICIPANT_UPDATE = 'p'
-};
-
 typedef struct Session_t {
-	u_int32_t logged_in;
-	u_int32_t connected_server;
-	u_int32_t is_connected;
-	u_int32_t is_joined;
+	u_int32_t logged_in;			// if the client has logged in
+	u_int32_t connected_server;		// the id of the current server
+	u_int32_t is_connected;			// if the client is connectd to a server
+	u_int32_t is_joined;			// if the user has joined a room
 
-	char username[20];
-	char chatroom[20];
+	char username[20];				// client's username
+	char chatroom[20];				// client's chatroom name
 
-	Message messages[25];
-	u_int32_t numOfMessages;
+	Message messages[25];			// messages receiveed from the server
+	u_int32_t numOfMessages;		// number of valid messages in my session
 
-	char listOfParticipants[MAX_PARTICIPANTS][20];
-	u_int32_t numOfParticipants;
+	char listOfParticipants[MAX_PARTICIPANTS][20];	// list of chatroom participants
+	u_int32_t numOfParticipants;	// number of valid participants of the chatroom
 
 } Session;
 
 ///////////////////////// Global Variables //////////////////////////////////////////////////////
 
 Session current_session;
-static char User[80];
-static char Spread_name[80];
-static int debug_level;
-
-static char Private_group[MAX_GROUP_NAME];
-static mailbox Mbox;
-
-static int To_exit = 0;
 
 //////////////////////////   Declarations    ////////////////////////////////////////////////////
 
@@ -89,21 +60,6 @@ static int handle_history_response(char *message, int size);
 static int handle_membership_status_response(char *message, int size, int num_groups);
 
 //////////////////////////   Core Functions  ////////////////////////////////////////////////////
-
-
-void print_hex(const char *string, int len)
-{
-        unsigned char *p = (unsigned char *) string;
-		int i;
-        for (i=0; i < len; ++i) {
-                if (! (i % 16) && i)
-                        printf("\n");
-
-                printf("0x%02x ", p[i]);
-        }
-        printf("\n\n");
-		fflush(stdout);
-}
 
 int main(int argc, char *argv[]) {
 	int ret;
@@ -134,7 +90,6 @@ int main(int argc, char *argv[]) {
 
 	E_attach_fd(Mbox, READ_FD, Read_message, 0, NULL, HIGH_PRIORITY);
 
-	// TODO: do we need while true here?
 	Print_menu();
 
 	printf("\nUser> ");
@@ -145,6 +100,7 @@ int main(int argc, char *argv[]) {
 	return (0);
 }
 
+// parse user command and trigger the action handler
 static void User_command() {
 	char command[130];
 	char mess[MAX_MESSLEN];
@@ -302,6 +258,7 @@ static void User_command() {
 	fflush(stdout);
 }
 
+// print menu on {Enter} pressed
 static void Print_menu() {
 	printf("\n");
 	printf("==========\n");
@@ -323,8 +280,9 @@ static void Print_menu() {
 	fflush(stdout);
 }
 
+// Read the message from server
+// try to parse the regular messages and handle the mebership changes
 static void Read_message() {
-
 	static char mess[MAX_MESSLEN];
 	char sender[MAX_GROUP_NAME];
 	char target_groups[MAX_MEMBERS][MAX_GROUP_NAME];
@@ -385,6 +343,7 @@ static void Read_message() {
 	fflush(stdout);
 }
 
+// parsend command line arguments
 static void Usage(int argc, char *argv[]) {
 	char debug_level_str[10];
 	sprintf(User, "user");
@@ -411,8 +370,8 @@ static void Usage(int argc, char *argv[]) {
 			if (argc < 2)
 				Print_help();
 			strcpy(debug_level_str, argv[1]);
-			debug_level = atoi(debug_level_str);
-			log_set_level(debug_level);
+			log_level = atoi(debug_level_str);
+			log_set_level(log_level);
 			argc--;
 			argv++;
 		} else {
@@ -420,11 +379,15 @@ static void Usage(int argc, char *argv[]) {
 		}
 	}
 }
+
+// print usage and command line arguments
 static void Print_help() {
 	printf("Usage: spuser\n%s\n%s\n%s\n%s\n", "\t[-u <user name>]  : unique (in this machine) user name", "\t[-s <address>]    : either port or port@machine",
 			"\t[-r ]    : use random user name", "\t[-d <log_level> ]    : choose between [0-7] default is 2");
 	exit(0);
 }
+
+// exit the application
 static void Bye() {
 	To_exit = 1;
 
@@ -435,6 +398,9 @@ static void Bye() {
 	exit(0);
 }
 
+
+// initialize the client session.
+// everything is set to zero
 static int initialize() {
 	log_info("Initializing data structures.");
 	current_session.logged_in = 0;
@@ -448,6 +414,8 @@ static int initialize() {
 
 //////////////////////////   User Event Handlers ////////////////////////////////////////////////////
 
+// send a generic message of type <type> to server
+// the username and type are appended to every message we send
 static int sendToServer(char type, char *payload, u_int32_t size) {
 	char serverPrivateGroup[80], message[size + 26];
 	int ret;
@@ -458,12 +426,13 @@ static int sendToServer(char type, char *payload, u_int32_t size) {
 	memcpy(message + 5, current_session.username, username_length);
 	memcpy(message + 5 + username_length, payload, size);
 	sprintf(serverPrivateGroup, "server%d", current_session.connected_server);
-	print_hex(message, size + username_length + 5);
+	// print_hex(message, size + username_length + 5);
 	ret = SP_multicast(Mbox, AGREED_MESS, serverPrivateGroup, 2, size + username_length + 5, message);
 	log_debug("multicast returned with %d", ret);
 	return 0;
 }
 
+// connect to a server
 static int sendConnectionRequestToServer() {
 	log_debug("sending connection request to server");
 	sendToServer(TYPE_CONNECT, "", 0);
@@ -471,6 +440,7 @@ static int sendConnectionRequestToServer() {
 
 }
 
+// end join request. we append the chatroom name as payload
 static int sendJoinRequestToServer(char *chatroom) {
 	int length = strlen(chatroom);
 	char payload[length + 4];
@@ -482,6 +452,7 @@ static int sendJoinRequestToServer(char *chatroom) {
 
 }
 
+// request to append <message> to chatroom <chatroom>
 static int sendAppendRequestToServer(char *chatroom, char *message) {
 	int c_length = strlen(chatroom);
 	int m_length = strlen(message);
@@ -496,6 +467,8 @@ static int sendAppendRequestToServer(char *chatroom, char *message) {
 
 }
 
+// like or unlike a message in <chatroom> with <pid> and <counter> 
+// type is  either TYPE_LIKE or TYPE_UNLIKE 
 static int sendLikeUnlikeRequestToServer(u_int32_t pid, u_int32_t counter, char *chatroom, char type) {
 	u_int32_t c_length = strlen(chatroom);
 	char payload[c_length + 12];
@@ -504,12 +477,12 @@ static int sendLikeUnlikeRequestToServer(u_int32_t pid, u_int32_t counter, char 
 	memcpy(payload + 4, chatroom, c_length);
 	memcpy(payload + 4 + c_length, &pid, 4);
 	memcpy(payload + 8 + c_length, &counter, 4);
-	print_hex(payload, 12 + c_length);
+	// print_hex(payload, 12 + c_length);
 	sendToServer(type, payload, c_length + 12);
 	return 0;
-
 }
 
+// request history of the <chatroom>
 static int sendHistoryRequestToServer(char *chatroom) {
 	u_int32_t length = strlen(chatroom);
 	char payload[length + 4];
@@ -520,18 +493,22 @@ static int sendHistoryRequestToServer(char *chatroom) {
 	return 0;
 }
 
+// request current server membership status (v)
 static int sendMembershipRequestToServer() {
 	log_debug("sending membership status request to server ");
 	sendToServer(TYPE_MEMBERSHIP_STATUS, "", 0);
 	return 0;
 }
 
+// convert line number of the chat messages to LTS.
+// we use this for likes/unlikes
 static void lineNumberToLTS(int line_number, u_int32_t *pid, u_int32_t *counter) {
 	*pid = current_session.messages[line_number - 1].serverID;
 	*counter = current_session.messages[line_number - 1].lamportCounter;
 	log_debug("line number %d changed to pid %d and counter %d", line_number, *pid, *counter);
 }
 
+// login with <username>
 static int handle_login(char *username) {
 	memcpy(current_session.username, username, strlen(username));
 	current_session.logged_in = 1;
@@ -539,6 +516,7 @@ static int handle_login(char *username) {
 	return 0;
 }
 
+// timed out in connecting to server. Display the connection failure to the user
 static void server_connect_timeout(int code, void *data)
 {
 	int ret;
@@ -551,6 +529,8 @@ static void server_connect_timeout(int code, void *data)
 	current_session.connected_server = 0;
 }
 
+// connect to a server
+// if already connected, first disconnect from the old server
 static int handle_connect(int server_id) {
 	int ret;
 	sp_time timeout;
@@ -581,6 +561,9 @@ static int handle_connect(int server_id) {
 	return 0;
 }
 
+
+// join a chatroom
+// if already joined, leave the previous chatroom first
 static int join(char *chatroom) {
 	char chatroom_group_name[80];
 	int ret;
@@ -602,6 +585,7 @@ static int join(char *chatroom) {
     current_session.is_joined = 1;
 	return 0;
 }
+
 
 static int handle_append(char *message, int size) {
 	sendAppendRequestToServer(current_session.chatroom, message);
@@ -659,6 +643,9 @@ static void display_disconnection_to_user()
 	log_warn("You are disconnected from the server. Try connecting again.\n");
 }
 
+// a membership change has occured. There are two cases:
+// - server is disconnected
+// - server has responded to connection request by joining to your mutual group
 static int handle_membership_message(char *sender, int num_groups, membership_info *mem_info, int service_type)
 {
 	char username[20], garbage[20], chatroom_group_name[80];
@@ -690,7 +677,7 @@ static int handle_membership_message(char *sender, int num_groups, membership_in
 		if(Is_caused_join_mess(service_type))
 		{
 			sscanf(mem_info->changed_member + 1, "%d%s", &serverID, garbage);
-			if(serverID == current_session.connected_server)
+			if(serverID == current_session.connected_server && !current_session.is_connected)
 			{
                 E_dequeue( server_connect_timeout, 0, NULL );
 				log_info("Successfully connected to server %d", current_session.connected_server);
@@ -701,6 +688,7 @@ static int handle_membership_message(char *sender, int num_groups, membership_in
 	return 0;
 }
 
+// iterate over messages and print them alonside participants
 static void displayMessages(){
 	printf("\n");
 	printf("==========\n");
@@ -721,6 +709,7 @@ static void displayMessages(){
 	//Print_menu();
 }
 
+// an update is received from server. parse and update chatroom messages and display them to the user
 static int handle_update_response(char *message, int size, int num_groups) {
 	u_int32_t username_size, num_messages, messageSize;
 	int offset = 5;

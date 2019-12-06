@@ -1,93 +1,56 @@
-#include "sp.h"
-#define _GNU_SOURCE
-#include <sys/types.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <dirent.h>
-#include <unistd.h>
+////////////////// Chat server source code v1.0 //////////////////////////////////////////////////////////
+//
+//	The chat server is responsible to manage basic chat operations (append, like, unlike, join, leave)
+//  and synchronize its data consistently between all other servers.
+//	This project was defined as the final course project for Distributed Systems in JHU
+//	Authors: Erfan Sharafzadeh (e.sharafzadeh@jhu.edu)
+//			 Farnaz Yousefi (f.yousefi@jhu.edu)
+//  											12/06/2019
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#include "log.h"
-#include "fileService.h"
-#include "list.h"
+#include "chat_include.h"
 
 #include "include/HashSet/src/hash_set.h"
 #include "include/c_hashmap/hashmap.h"
+#include "list.h"
+#include "fileService.h"
 
-#define MAX_MESSLEN 102400
-#define MAX_VSSETS 10
-#define MAX_MEMBERS 100
-#define MAX_PARTICIPANTS 100
-#define MAX_CHATROOMS 100
-#define RECREATE_FILES_IN_STARTUP 0
-#define NUM_SERVERS 5
-#define MAX_HISTORY_MESSAGES 100
 
-///////////////////////// Data Structures   //////////////////////////////////////////////////////
+///////////////////////// Server Data Structures   //////////////////////////////////////////////////////
 
-enum MessageType
-{
-	TYPE_LOGIN = 'u',
-	TYPE_CONNECT = 'c',
-	TYPE_APPEND = 'a',
-	TYPE_JOIN = 'j',
-	TYPE_LIKE = 'l',
-	TYPE_UNLIKE = 'r',
-	TYPE_HISTORY = 'h',
-	TYPE_HISTORY_RESPONSE = 'H',
-	TYPE_MEMBERSHIP_STATUS = 'v',
-	TYPE_CLIENT_UPDATE = 'i',
-	TYPE_MEMBERSHIP_STATUS_RESPONSE = 'm',
-	TYPE_SERVER_UPDATE = 's',
-	TYPE_ANTY_ENTROPY = 'e',
-	TYPE_PARTICIPANT_UPDATE = 'p'
-};
-
-enum State
-{
-	STATE_PRIMARY,
-	STATE_RECONCILING
-};
-
+// This struct stores all the chatroom data that are needed to be in memory
 typedef struct Chatroom_t
 {
-	char name[20];
-	u_int32_t numOf_messages;
-	Message messages[25];
-	hash_set_st participants[5];
-	hash_set_st likers[25];
-	u_int32_t num_of_likers[25];
-	u_int32_t num_of_participants[5];
-	u_int32_t message_start_pointer;
+	char name[20];							// chatroom name
+	u_int32_t num_of_messages;				// number of messages residing in memory
+	Message messages[25];					// array of last 25 messages in the memory (only [num_of_messages] of the slots are full)
+	hash_set_st participants[NUM_SERVERS];	// array of hash sets containing participants connected to each server
+	hash_set_st likers[25];					// array of hash sets containing usernames of the message likers
+	u_int32_t num_of_likers[25];			// number of likers for each message
+	u_int32_t num_of_participants[5];		// number of chatroom participants connected to each server
+	u_int32_t message_start_pointer;		// to iterate over messages as a circular buffer
 } Chatroom;
 
+// This struct stores the server session information
 typedef struct Session_t
 {
-	u_int32_t server_id;			   // my ID
-	Chatroom chatrooms[MAX_CHATROOMS]; // chatroom data list
-	int connected_clients;			   // number of clients currently connected to me
-	map_t clients;					   // connected clients and their chatroom ID
-	int num_of_chatrooms;			   // to keep track of in-memory data structures
-	u_int32_t membership[5];		   // Membership status of each server
-	u_int32_t lamport_counters[5][5];  // Stores the last received lamport counter from each server according to each server's view
-	u_int32_t lamport_counter;
-	enum State state;
-	Node *unprocessed_update_start;
-	u_int32_t unprocessed_updates_count;
-	u_int32_t processed_lamport_counters[5];
+	u_int32_t server_id;			   		// my ID
+	Chatroom chatrooms[MAX_CHATROOMS]; 		// chatroom data list
+	int connected_clients;			   		// number of clients currently connected to me
+	map_t clients;					  		// connected clients and their chatroom ID
+	int num_of_chatrooms;			 		// to keep track of in-memory data structures
+	u_int32_t membership[5];		   		// Membership status of each server
+	u_int32_t lamport_counters[5][5];  		// Stores the last received lamport counter from each server according to each server's view
+	u_int32_t lamport_counter;		   		// my current lamport counter
+	enum State state;				   		// current state of the server [PRIMARY or RECONCILING]
+	Node *unprocessed_update_start;	   		// client updates received during reconciliation
+	u_int32_t unprocessed_updates_count;	// number of client updates received during reconciliation
+	u_int32_t processed_lamport_counters[5]; // lamport counters processed from the log files of each server 
 } Session;
 
 ///////////////////////// Global Variables //////////////////////////////////////////////////////
 
 Session current_session;
-static char User[80];
-static char Spread_name[80];
-
-static char Private_group[MAX_GROUP_NAME];
-static mailbox Mbox;
-
-static int To_exit = 0;
-static int log_level;
 
 //////////////////////////   Declarations    ////////////////////////////////////////////////////
 
@@ -97,7 +60,6 @@ static void Bye();
 
 static int initialize();
 
-//static int handle_disconnect(char *username);
 static int handle_connect(char *message, u_int32_t size);
 static void handle_server_join(u_int32_t server_id);
 static void handle_server_leave(u_int32_t server_id);
@@ -117,11 +79,14 @@ static int parse(char *message, int size, int num_groups);
 static int handle_server_update();
 static int handle_participant_update(char *message, int msg_size);
 static int handle_anti_entropy();
-static int handle_membership_change();
+static int handle_client_membership_change();
 static void update_chatroom_data(int chatroom_index, char *chatroom, char *username, u_int32_t payload_length, char *payload, logEvent e, u_int32_t serverID, int dump);
 
-////////////////////////// Utility ////////////////////////////////////////
+////////////////////////// Utility Functions for working with hash sets and files ////////////////////////////////////////
 
+// The hash function for hash set
+// inputs: string value
+// outputs: int value of the string hash
 u_int32_t chksum(const void *str)
 {
 	char *s = (char *)str;
@@ -137,7 +102,13 @@ u_int32_t chksum(const void *str)
 	return (c);
 }
 
-int hash_set_remove(hash_set_st *old_hashset, u_int32_t length, u_int32_t server_index, char *username)
+// remove from hash set 
+// Inputs:
+//		old_hashset -> the hash set to remove from
+//		length -> current length of the hash set
+//		username -> the value to be removed
+// outputs: count of elements in hashset
+int hash_set_remove(hash_set_st *old_hashset, u_int32_t length, char *username)
 {
 	hash_set_it *it;
 	int j, count = 0;
@@ -171,6 +142,22 @@ int hash_set_remove(hash_set_st *old_hashset, u_int32_t length, u_int32_t server
 		it_next(it);
 	}
 	return count;
+}
+
+// returns the extension of a file
+// used to find chatroom files in the base directory
+static const char *get_filename_ext(const char *filename) {
+    const char *dot = strrchr(filename, '.');
+    if(!dot || dot == filename) return "";
+    return dot + 1;
+}
+
+// creates a log line from logEvent struct of <e>
+// returnes the <line>
+void createLogLine(u_int32_t server_id, logEvent e, char *line)
+{
+	sprintf(line, "%u~%s~%c~%s\n", e.lamportCounter, e.chatroom, e.eventType, e.payload);
+	log_debug("log line is %s", line);
 }
 
 //////////////////////////   Core Functions  ////////////////////////////////////////////////////
@@ -210,9 +197,9 @@ int main(int argc, char *argv[])
 	return (0);
 }
 
+// Spread event handler
 static void Read_message()
 {
-
 	static char mess[MAX_MESSLEN];
 	char sender[MAX_GROUP_NAME];
 	char target_groups[MAX_MEMBERS][MAX_GROUP_NAME];
@@ -281,7 +268,7 @@ static void Read_message()
 			log_info("received incorrecty membership message of type 0x%x\n", service_type);
 
     
-		// server_group	handler
+		// server_group	handler when a server joins or leaves
 		if (!strncmp(sender, "chat_servers", 12))
 		{
 			u_int32_t new_memberships[NUM_SERVERS];
@@ -311,12 +298,12 @@ static void Read_message()
 		}
 		else if (!strncmp(sender, "server", 6))
 			log_debug("It is me joining my group!");
-		else	
-		{
+		else		// client memberships
+		{	
 			join = 0;
 			if(Is_caused_join_mess(service_type))
 				join = 1;
-        	handle_membership_change(target_groups, num_groups, join, memb_info.changed_member, sender);
+        	handle_client_membership_change(target_groups, num_groups, join, memb_info.changed_member, sender);
 		}
         
 	}
@@ -329,6 +316,7 @@ static void Read_message()
 		log_error("received message of unknown message type 0x%x with ret %d\n", service_type, ret);
 }
 
+// parse command line arguments
 static void Usage(int argc, char *argv[])
 {
 	sprintf(Spread_name, "10330");
@@ -349,6 +337,7 @@ static void Usage(int argc, char *argv[])
 	current_session.server_id = atoi(argv[1]);
 }
 
+// Exit the application
 static void Bye()
 {
 	To_exit = 1;
@@ -360,6 +349,9 @@ static void Bye()
 	exit(0);
 }
 
+//////////////////////////////////////////////// CHAT SERVER LOGIC /////////////////////////////////////////////////
+
+// parse the message received from either clients or servers
 static int parse(char *message, int size, int num_groups)
 {
 	char type;
@@ -398,6 +390,7 @@ static int parse(char *message, int size, int num_groups)
 		handle_participant_update(message, size);
 		break;
     case TYPE_MEMBERSHIP_STATUS_RESPONSE:
+	case TYPE_HISTORY_RESPONSE:
         break;
 	default:
 		log_error("invalid message type %c", type);
@@ -406,47 +399,9 @@ static int parse(char *message, int size, int num_groups)
 	return 0;
 }
 
-static const char *get_filename_ext(const char *filename) {
-    const char *dot = strrchr(filename, '.');
-    if(!dot || dot == filename) return "";
-    return dot + 1;
-}
-
-// static void dump_message_from_file(u_int32_t chatroom_index, Message m)
-// {
-//     u_int32_t msg_pointer;
-// 	if (current_session.chatrooms[chatroom_index].numOf_messages < 25)
-// 	{
-// 		msg_pointer = current_session.chatrooms[chatroom_index].numOf_messages;
-// 		log_debug("chatroom %s has %d message(s)", current_session.chatrooms[chatroom_index].name, msg_pointer);
-// 	}
-// 	else
-// 	{
-// 		msg_pointer = current_session.chatrooms[chatroom_index].message_start_pointer;
-// 	}
-// 	memcpy(current_session.chatrooms[chatroom_index].messages[msg_pointer].message, m.message, strlen(m.message));
-// 	memcpy(current_session.chatrooms[chatroom_index].messages[msg_pointer].userName, m.userName, strlen(m.userName));
-// 	current_session.chatrooms[chatroom_index].messages[msg_pointer].userName[strlen(m.userName)] = 0;
-
-// 	current_session.chatrooms[chatroom_index].messages[msg_pointer].numOfLikes = 0;
-// 	current_session.chatrooms[chatroom_index].messages[msg_pointer].lamportCounter = m.lamportCounter;
-// 	current_session.chatrooms[chatroom_index].messages[msg_pointer].serverID = m.serverID;
-// 	current_session.chatrooms[chatroom_index].numOf_messages++;
-// 	if (current_session.chatrooms[chatroom_index].message_start_pointer == 25)
-// 	{
-// 		current_session.chatrooms[chatroom_index].message_start_pointer = 0;
-// 	}
-// }
-
-// static void rebuild_lts_data(u_int32_t index)
-// {
-// 	int i;
-// 	for(i = 0;i < current_session.chatrooms[index].numOf_messages; i++)
-// 	{
-//     	current_session.lamport_counters[current_session.server_id-1][current_session.chatrooms[index].messages[i].serverID-1] = current_session.chatrooms[index].messages[i].lamportCounter;
-// 	}
-// }
-
+// creates chatroom LTS data from .chatroom files
+// it traverses the base directory and looks for .chatroom files
+// opens those files and creates the chatrooms and their data from lines in the file
 static void create_chatroom_from_files()
 {
 	DIR *directory;
@@ -482,20 +437,27 @@ static void create_chatroom_from_files()
                     parseLineInMessagesFile(line, &m);
                     log_debug("updating our line in matrix to : LTS = %d, %d", m.serverID, m.lamportCounter);
 					current_session.lamport_counters[current_session.server_id-1][m.serverID - 1] = m.lamportCounter;
-                    // dump_message_from_file(index, m);
                 }
             }
-            // rebuild_lts_data(index);
 		}
 	}
 	closedir(directory);
 }
 
+// after we opened and read the chatroom files, we open the log files to process more recent updates
 static void update_chatroom_data_based_on_log_files()
 {
-	process_log_files(1);	// TODO: might need more work
+	int startup = 1;	// sometimes we are not in startup, but want to process logs. then we can this function with 0
+	process_log_files(startup);
 }
 
+// initialize the server data on startup
+// - set everything to 0
+// - create/open log files
+// - set state to Primary
+// - buld chatrooms from files
+// - join servers group
+// - join server's public group (the one clients use to send requests)
 static int initialize()
 {
 	int ret, i, j;
@@ -510,11 +472,11 @@ static int initialize()
 	current_session.state = STATE_PRIMARY;
 	current_session.unprocessed_update_start = NULL;
 
-	for (i = 0; i < 5; i++)
+	for (i = 0; i < NUM_SERVERS; i++)
 	{
 		current_session.membership[i] = 0;
 		current_session.processed_lamport_counters[i] = 0;
-		for (j = 0; j < 5; j++)
+		for (j = 0; j < NUM_SERVERS; j++)
 		{
 			current_session.lamport_counters[i][j] = 0;
 		}
@@ -535,8 +497,9 @@ static int initialize()
 	return 0;
 }
 
-//////////////////////////   User Event Handlers ////////////////////////////////////////////////////
 
+// A generic function to send message of type <type> to servers group
+// It appends a 1-byte <type> and 4-byte <server id> to the start of the <payload> and sends it to all servers
 static int send_to_servers(char type, char *payload, u_int32_t size)
 {
 	char *serversGroup = "chat_servers";
@@ -549,6 +512,7 @@ static int send_to_servers(char type, char *payload, u_int32_t size)
 	return 0;
 }
 
+// iterates over NUM_SERVERS list of participants for chatroom <index> and appends all participants to <agg> as the output of the function
 static int aggregate_participants(hash_set_st *agg, int index)
 {
 	int i, j, count = 0;
@@ -569,6 +533,12 @@ static int aggregate_participants(hash_set_st *agg, int index)
 	return count;
 }
 
+// we call this whenever we want to send an update to the chatroom to clients through server's exclusive group for that chatroom
+// - it inputs the name and index of the chatroom
+// - aggregates the chatroom participants
+// - gathers last 25 messages
+// - aggregates the number of likes per message
+// - sends the created payload to the chatroom group
 static int send_chatroom_update_to_clients(char *chatroom, int index)
 {
 	int j;
@@ -595,10 +565,10 @@ static int send_chatroom_update_to_clients(char *chatroom, int index)
 		it_next(it);
 	}
 
-	memcpy(message + offset, &current_session.chatrooms[index].numOf_messages, 4);
+	memcpy(message + offset, &current_session.chatrooms[index].num_of_messages, 4);
 	offset += 4;
 	int i;
-	for (i = 0; i < current_session.chatrooms[index].numOf_messages; i++)
+	for (i = 0; i < current_session.chatrooms[index].num_of_messages; i++)
 	{
 		u_int32_t message_size = strlen(current_session.chatrooms[index].messages[i].message);
 		log_debug("message size is %d, LTS = %d,%d", message_size, current_session.chatrooms[index].messages[i].serverID, current_session.chatrooms[index].messages[i].lamportCounter);
@@ -618,11 +588,14 @@ static int send_chatroom_update_to_clients(char *chatroom, int index)
 		memcpy(message + offset + 4 + message_size, &current_session.chatrooms[index].num_of_likers[i], 4);
 		offset += (8 + message_size);
 	}
-	log_debug("sending client update for chatroom %s with %d participants and %d messages", chatroom, num_participants, current_session.chatrooms[index].numOf_messages);
+	log_debug("sending client update for chatroom %s with %d participants and %d messages", chatroom, num_participants, current_session.chatrooms[index].num_of_messages);
 	SP_multicast(Mbox, AGREED_MESS, chatroomGroup, 2, offset + 5, message);
 	return 0;
 }
 
+// handle client connection message
+// inputs the raw message buffe and its size
+// parses the usernamefrom the message and creates a group between the server and the client to support unicasts and connection/disconnection events
 static int handle_connect(char *message, u_int32_t size)
 {
 	u_int32_t username_size;
@@ -637,15 +610,12 @@ static int handle_connect(char *message, u_int32_t size)
 	ret = SP_join(Mbox, group_name);
 	if (ret < 0)
 		SP_error(ret);
-	current_session.connected_clients++; // TODO: not if the client is already connected
-	//chatroom_id = (int32_t *) malloc(sizeof(int32_t));
-	//*chatroom_id = -1;
-	//ret = hashmap_put(current_session.clients, username, chatroom_id);
-	//if(ret!=MAP_OK)
-	//	log_error("Error in adding client to my map");
+	current_session.connected_clients++;
 	return 0;
 }
 
+// inputs the name of the chatroom and returns the unique index of that chatroom
+// possibly the most used utility function in our app!
 static int find_chatroom_index(char *chatroom)
 {
 	int i;
@@ -659,6 +629,12 @@ static int find_chatroom_index(char *chatroom)
 	return -1;
 }
 
+// create a new chatroom and its data structures
+// if <no_create_file> is set, do not create chatroom file
+// This function is called when:
+// - A client send a join to a new chatroom name
+// - Server receives participant upadate ot append from other servers
+// - Server parses chatroom file in startup
 static int create_new_chatroom(char *chatroom, int no_create_file)
 {
 	int i;
@@ -666,9 +642,9 @@ static int create_new_chatroom(char *chatroom, int no_create_file)
 	log_info("Creating data structures for new chatroom %s", chatroom);
 	current_session.num_of_chatrooms++;
 	strcpy(current_session.chatrooms[index].name, chatroom);
-	current_session.chatrooms[index].numOf_messages = 0;
+	current_session.chatrooms[index].num_of_messages = 0;
 	current_session.chatrooms[index].message_start_pointer = 0;
-	for (i = 0; i < 5; i++)
+	for (i = 0; i < NUM_SERVERS; i++)
 	{
 		current_session.chatrooms[index].participants[i] = *hash_set_init(chksum);
 		current_session.chatrooms[index].num_of_participants[i] = 0;
@@ -683,6 +659,8 @@ static int create_new_chatroom(char *chatroom, int no_create_file)
 	return index;
 }
 
+// called whenever a participant change occures in chatroom <chatroom> with index <index>
+//	The username is the joined/left participant
 static int send_participant_change_to_servers(char *chatroom, char *username, int index)
 {
 	char payload[1300];
@@ -714,6 +692,12 @@ static int send_participant_change_to_servers(char *chatroom, char *username, in
 	return 0;
 }
 
+// handle join request from client
+// inputs the raw message and parses it
+// if client was previously in another room, first handle its leave from that room
+// if chatroom does not exist, create one
+// add the username to chatroom participants and send participant update to servers
+// send a client update back to the client
 static int handle_join(char *message, int size)
 {
 	u_int32_t username_length, chatroom_length;
@@ -732,10 +716,10 @@ static int handle_join(char *message, int size)
 	ret = hashmap_get(current_session.clients, username, (void **)(&old_idx));
 	if (ret == MAP_OK)
 	{
-		u_int32_t length, count;	// TODO: a bug here
+		u_int32_t length, count;
 		log_debug("client was previously in chatroom index %d", *old_idx);
 		length = current_session.chatrooms[*old_idx].num_of_participants[current_session.server_id - 1];
-		count = hash_set_remove(&current_session.chatrooms[*old_idx].participants[current_session.server_id - 1], length, current_session.server_id - 1, username);
+		count = hash_set_remove(&current_session.chatrooms[*old_idx].participants[current_session.server_id - 1], length, username);
 		current_session.chatrooms[*old_idx].num_of_participants[current_session.server_id - 1] = count;
 		send_participant_change_to_servers(current_session.chatrooms[*old_idx].name, username, *old_idx);
 		send_chatroom_update_to_clients(current_session.chatrooms[*old_idx].name, *old_idx);
@@ -762,12 +746,9 @@ static int handle_join(char *message, int size)
 	return 0;
 }
 
-void createLogLine(u_int32_t server_id, logEvent e, char *line)
-{
-	sprintf(line, "%u~%s~%c~%s\n", e.lamportCounter, e.chatroom, e.eventType, e.payload);
-	log_debug("log line is %s", line);
-}
-
+// This is wher we notify the servers of a new line in our log file
+// <server id> is the server who has a new update
+// we only attach the server id to the line and send it
 static int send_log_update_to_servers(u_int32_t server_id, u_int32_t line_length, char *line)
 {
 	u_int32_t size = 0;
@@ -781,20 +762,11 @@ static int send_log_update_to_servers(u_int32_t server_id, u_int32_t line_length
 	return 0;
 }
 
-void print_hex(const char *string)
-{
-        unsigned char *p = (unsigned char *) string;
-		int i;
-        for (i=0; i < 100; ++i) {
-                if (! (i % 16) && i)
-                        printf("\n");
-
-                printf("0x%02x ", p[i]);
-        }
-        printf("\n\n");
-		fflush(stdout);
-}
-
+// handle append message from the client
+// - parse the username
+// - parse the chatroom name
+// - if we are in reconciliation, store it in a temporary list
+// - otherwise, parse the message, create a log line, store it in the log and then send an update to all servers and also to the client
 static int handle_append(char *message, int msg_size)
 {
 	u_int32_t username_length, chatroom_length, payload_length, offset;
@@ -802,7 +774,7 @@ static int handle_append(char *message, int msg_size)
 	char username[20], chatroom[20], payload[80];
 	int chatroom_index;
 	logEvent e;
-	print_hex(message);
+	// print_hex(message, 100);
 	memset(&e, 0, sizeof(e));
 	memset(payload, 0, 80);
 	memcpy(&username_length, message + 1, 4);
@@ -852,15 +824,19 @@ static int handle_append(char *message, int msg_size)
 	return 0;
 }
 
+// this function updates the chatroom data structures with new data received
+// the new data is stored in the chatroom data structures and then an update is sent to all parties
+// if we have 25 messages in memory, we need to transfer the pldest one to the chatroom file first
+// this function is called with <dump> = 0 when we are reading the chatroom data from the file and only want to reflect LTS data
 static void update_chatroom_data(int chatroom_index, char *chatroom, char *username, u_int32_t payload_length, char *payload, logEvent e, u_int32_t serverID, int dump)
 {
 	u_int32_t msg_pointer;
 	int i, offset = 0;
 	hash_set_it *it;
 	char *liker_username;
-	if (current_session.chatrooms[chatroom_index].numOf_messages < 25)
+	if (current_session.chatrooms[chatroom_index].num_of_messages < 25)
 	{
-		msg_pointer = current_session.chatrooms[chatroom_index].numOf_messages;
+		msg_pointer = current_session.chatrooms[chatroom_index].num_of_messages;
 		log_debug("chatroom %s has %d message(s)", chatroom, msg_pointer);
 	}
 	else
@@ -890,7 +866,7 @@ static void update_chatroom_data(int chatroom_index, char *chatroom, char *usern
 	current_session.chatrooms[chatroom_index].messages[msg_pointer].numOfLikes = 0;
 	current_session.chatrooms[chatroom_index].messages[msg_pointer].lamportCounter = e.lamportCounter;
 	current_session.chatrooms[chatroom_index].messages[msg_pointer].serverID = serverID;
-	current_session.chatrooms[chatroom_index].numOf_messages++;
+	current_session.chatrooms[chatroom_index].num_of_messages++;
 	if (current_session.chatrooms[chatroom_index].message_start_pointer == 25)
 	{
 		current_session.chatrooms[chatroom_index].message_start_pointer = 0;
@@ -899,10 +875,15 @@ static void update_chatroom_data(int chatroom_index, char *chatroom, char *usern
 		send_chatroom_update_to_clients(chatroom, chatroom_index);
 }
 
+// Apply client like to the message
+// inputs <chatroom_index> LTS of the message and the username of the liker
+// the username is added to the likers hashset
+// NOTE: if message is not in the memory, we have a correct design to find the line in the chatroom file and update it
+// 		  however, we didn't have time to do it now.
 static int apply_like(u_int32_t chatroom_index, u_int32_t pid, u_int32_t counter, char *username)
 {
 	int i, hashset_result;
-	for(i = 0; i < current_session.chatrooms[chatroom_index].numOf_messages; i++)
+	for(i = 0; i < current_session.chatrooms[chatroom_index].num_of_messages; i++)
 	{
 		if(current_session.chatrooms[chatroom_index].messages[i].serverID == pid &&
 			current_session.chatrooms[chatroom_index].messages[i].lamportCounter == counter)
@@ -922,32 +903,37 @@ static int apply_like(u_int32_t chatroom_index, u_int32_t pid, u_int32_t counter
 		return 0;
 }
 
+// Apply client unlike to the message
+// inputs <chatroom_index> LTS of the message and the username of the unliker
+// the username is remove to the likers hashset
+// NOTE: if message is not in the memory, we have a correct design to find the line in the chatroom file and update it
+// 		  however, we didn't have time to do it now.
 static int apply_unlike(u_int32_t chatroom_index, u_int32_t pid, u_int32_t counter, char *username)
 {
 	int i, hashset_result, flag = 0;
 	u_int32_t length;
-	for(i = 0; i < current_session.chatrooms[chatroom_index].numOf_messages; i++)
+	for(i = 0; i < current_session.chatrooms[chatroom_index].num_of_messages; i++)
 	{
 		if(current_session.chatrooms[chatroom_index].messages[i].serverID == pid &&
 			current_session.chatrooms[chatroom_index].messages[i].lamportCounter == counter)
 		{
 			log_debug("applying unlike on %d, %d for chatroom %d, liker = %s", pid, counter, chatroom_index, username);
 			length = current_session.chatrooms[chatroom_index].num_of_likers[i];
-			hashset_result = hash_set_remove(&current_session.chatrooms[chatroom_index].likers[i], length, current_session.server_id - 1, username);
+			hashset_result = hash_set_remove(&current_session.chatrooms[chatroom_index].likers[i], length, username);
 			log_debug("num of likers for that message = %d", hashset_result);
 			current_session.chatrooms[chatroom_index].num_of_likers[i] = hashset_result;
-			flag = 1;
-			break;
+			return 1;
 		}
 	}
-	if(!flag)
-	{
-		log_info("The message to be unliked is not in memory. So we need to find it in the chatroom file and update it");
-	}
+	log_info("The message to be unliked is not in memory. So we need to find it in the chatroom file and update it");
 	return flag;
 }
 
-
+// handle the like/unlike message from the client
+// we parse the sername and chatroom first,
+// we find the chatoom index. create the log line and update the log file
+// if we are in reconciliation (we store the log) in a temporary list
+// otherwise, we reflect thelike/unlike in our data.
 static int handle_like_unlike(char *message, char event_type)
 {
 
@@ -958,7 +944,6 @@ static int handle_like_unlike(char *message, char event_type)
 	char username[20], chatroom[20];
 	u_int32_t pid, counter;
 	char line[100];
-	print_hex(message);
 	memset(&e, 0, sizeof(e));
 	memset(username,0, 20);
 	memset(chatroom,0, 20);
@@ -1013,6 +998,8 @@ static int handle_like_unlike(char *message, char event_type)
 	return 0;
 }
 
+// send a history of the chatroom to the clients
+// this message is directly unicast to client and does not contain likes in current version
 static int send_history_response(char *username, char *chatroom)
 {
 	int i;	
@@ -1026,7 +1013,7 @@ static int send_history_response(char *username, char *chatroom)
 	retrieve_chatroom_history(current_session.server_id, chatroom, &num_of_messages, messages);
 	// TODO: parse additional info and get number of likers
 
-	for(i = 0; i < current_session.chatrooms[index].numOf_messages;i++)
+	for(i = 0; i < current_session.chatrooms[index].num_of_messages;i++)
 	{
 		messages[num_of_messages].serverID = current_session.chatrooms[index].messages[i].serverID;
 		messages[num_of_messages].lamportCounter = current_session.chatrooms[index].messages[i].lamportCounter;
@@ -1056,7 +1043,7 @@ static int send_history_response(char *username, char *chatroom)
 		memcpy(response + offset + 4, current_session.chatrooms[index].messages[i].message, message_size);
 		log_debug("message is %s", messages[i].message);
 		memcpy(response + offset + 4 + message_size, &messages[i].numOfLikes, 4);
-		log_debug("num of likes is %s", messages[i].numOfLikes);
+		log_debug("num of likes is %d", messages[i].numOfLikes);
 		offset += (8 + message_size);
 	}
 	log_debug("sending history response to group %s with %d messages ", clientGroup, num_of_messages);
@@ -1064,6 +1051,8 @@ static int send_history_response(char *username, char *chatroom)
     return 0;    
 }
 
+// handle the history request from clients
+// parse the chatroom name and call the above function to build a response
 static int handle_history(char *message, u_int32_t size)
 {
     u_int32_t username_length, chatroom_length;
@@ -1083,6 +1072,9 @@ static int handle_history(char *message, u_int32_t size)
 	return 0;
 }
 
+// handle the "v" message from clients
+// we parse the username to be able to unicast it back to the client.
+// the response is an array of NUM_SERVERS integers either 1 or 0. They show the current membership of each server in current server's membership group.
 static int handle_membership_status(char *message, int msg_size)
 {
 	int i;
@@ -1111,8 +1103,9 @@ static int handle_membership_status(char *message, int msg_size)
 	return 0;
 }
 
-//////////////////////////   Server Event Handlers ////////////////////////////////////////////////////
-
+// Compare the last processed lamport conters with last received lamport counters.
+// if <startup> is set, we are building our data from scratch, 
+// so we don't have last processed counters yet. in this case return 1 and we have other means to check if we have processed all the logs
 static int log_remaining(u_int32_t startup)
 {
 	int i;
@@ -1127,6 +1120,8 @@ static int log_remaining(u_int32_t startup)
 	return 0;
 }
 
+// gets logevent <e> from log file <server_id>, and decides how to process it.
+// it might be an append, like, or an unlike message
 static int process_log_event(logEvent e, u_int32_t server_id)
 {
 	u_int32_t chatroom_index, pid, counter;
@@ -1166,6 +1161,7 @@ static int process_log_event(logEvent e, u_int32_t server_id)
 	return 0;
 }
 
+// a utility function that tries to detect when we have finished traversing all log files
 static int log_line_available(u_int32_t *data_available)
 {
 	int i;
@@ -1177,6 +1173,9 @@ static int log_line_available(u_int32_t *data_available)
 	return 0;
 }
 
+// This function is called in startup or after reconciliation to process the log files and update the chatroom data.
+// it will read log updates line by line and process them.
+// The servers and clients will be notified after each line is processed
 static int process_log_files(u_int32_t startup)
 {
 	logEvent e[NUM_SERVERS];
@@ -1211,11 +1210,11 @@ static int process_log_files(u_int32_t startup)
     return 0;
 }
 
+// This function is called if we have received a log update from servers
 static int handle_server_update(char *messsage, int size)
 {
 	u_int32_t sender_id, server_id, log_length;
 	logEvent e;
-	//char username[20], message_text[80];
 	memcpy(&sender_id, messsage + 1, 4);
 	memcpy(&server_id, messsage + 5, 4);
 	memcpy(&log_length, messsage + 9, 4);
@@ -1227,13 +1226,12 @@ static int handle_server_update(char *messsage, int size)
 	log_debug("handling server update (of server %d) from server %d. update line is: %s of length %d", server_id, sender_id, line, log_length);
 	parseLineInLogFile(line, &e);
 	if(e.lamportCounter <= current_session.lamport_counters[current_session.server_id - 1][server_id - 1]){
-		log_warn("received duplicate data. ignoring");
+		log_debug("received duplicate data. ignoring");
 		return 0;
 	}
 	addEventToLogFile(server_id, line);
 	if(e.lamportCounter > current_session.lamport_counter)
 		current_session.lamport_counter = e.lamportCounter;
-	// current_session.lamport_counters[current_session.server_id - 1][current_session.server_id - 1] = e.lamportCounter;
 	current_session.lamport_counters[current_session.server_id - 1][server_id - 1] = e.lamportCounter;
 
 	if(current_session.state == STATE_RECONCILING){
@@ -1249,6 +1247,10 @@ static int handle_server_update(char *messsage, int size)
 	return 0;
 }
 
+// try to resend missing data to propagate the updates which are not available in other servers
+// it basically tries to find updates newer than LTS <server_id>,<lamport_counter> and resend them
+// for now, we only support 100 most recent updates
+// for the flow control, we will send the data in smaller batches instead
 static int resend_data(u_int32_t server_id, u_int32_t lamport_counter)
 {
 	int i;
@@ -1265,11 +1267,12 @@ static int resend_data(u_int32_t server_id, u_int32_t lamport_counter)
 		createLogLine(current_session.server_id, logs[i], buffer);
 		send_log_update_to_servers(current_session.server_id, strlen(buffer), buffer);
 	}
-
 	return 0;
 }
 
-static int i_am_responsible_to_resend_data(u_int32_t server_id)
+// check if we are responsible for the missing data:
+// either if it is our own data, or the server responsible for that data is not present in the partition and we are the lowes numbered server
+static int check_if_we_should_resend_data(u_int32_t server_id)
 {
 	if(server_id == current_session.server_id)
 	{
@@ -1315,11 +1318,13 @@ static int i_am_responsible_to_resend_data(u_int32_t server_id)
             log_debug("I am responsible for missing data from %d. attempting to send from lc %d...",server_id, min_lc);
 			resend_data(server_id, min_lc);
         }
-		return 1;	// my own data
+		return 1;
 	}
 	return 0;
 }
 
+// check if we should get back to the primary state.
+// This is done by comparing the rows of the lamport counters matrix, and they all need to be the same for servers present in the current membership
 static int check_primary_conditions()
 {
 	int i, j;
@@ -1339,6 +1344,7 @@ static int check_primary_conditions()
 	return 1;
 }
 
+// handle the client updates receivind during reconciliation in the linked list
 static int handle_unprocessed_updates()
 {
 	if(current_session.unprocessed_updates_count){
@@ -1355,6 +1361,10 @@ static int handle_unprocessed_updates()
     return 0;
 }
 
+// handle the anti-entropy message from from another server
+// we traverse the received matrix and compare its values with our own matrix
+// if we see a difference in our own row of the received matrix, we will send an anti-entropy message.
+// we also check if we need to resend some data to the servers that are behind
 static int handle_anti_entropy(char *messsage, int size)
 {
 	u_int32_t sender_id, lamport_ctr;
@@ -1373,7 +1383,7 @@ static int handle_anti_entropy(char *messsage, int size)
 			log_debug("anti entropy: lts for row %d col %d is %d", i,j, lamport_ctr);
 			if (i == current_session.server_id - 1)
 			{
-				// Don't update data about myself. I know me better.
+				// Don't update data about myself. I know myself better!
 				// I should resend my entropy matrix to servers
 				if(lamport_ctr < current_session.lamport_counters[i][j])
 					outdated = 1;
@@ -1398,7 +1408,7 @@ static int handle_anti_entropy(char *messsage, int size)
 
 	// But, if the server is behind, and I'm responsible, resend the data.
 	for (i = 0; i < NUM_SERVERS; i++)
-	    i_am_responsible_to_resend_data(i+1);
+	    check_if_we_should_resend_data(i+1);
 
 	if(outdated){
 		log_debug("resending Anti-entropy to all");
@@ -1414,10 +1424,10 @@ static int handle_anti_entropy(char *messsage, int size)
 		process_log_files(0);
 		handle_unprocessed_updates();
 	}
-
 	return 0;
 }
 
+// send my lamport counters matrix to all servers
 static int send_anti_entropy_to_server(u_int32_t server_id)
 {
 	u_int32_t size = NUM_SERVERS * NUM_SERVERS * 4;
@@ -1438,6 +1448,7 @@ static int send_anti_entropy_to_server(u_int32_t server_id)
 	return 0;
 }
 
+// when <server_id> joins, we need to send anti-entropy message to all servers
 static void handle_server_join(u_int32_t server_id)
 {
     log_debug("handling server join");
@@ -1446,22 +1457,22 @@ static void handle_server_join(u_int32_t server_id)
 	send_anti_entropy_to_server(server_id);
 }
 
+// when a server leaves, we remove its participants from all chatrooms and update clients
 static void handle_server_leave(u_int32_t server_id)
 {
 	int i;
 	for (i = 0; i < current_session.num_of_chatrooms; i++)
 	{
-		log_debug("chatroom %d 1111", i);
 		hash_set_clear(&current_session.chatrooms[i].participants[server_id - 1]);
-		log_debug("chatroom %d 2222", i);
 		current_session.chatrooms[i].num_of_participants[server_id -1] = 0;
 		send_chatroom_update_to_clients(current_session.chatrooms[i].name, i);
-		log_debug("chatroom %d 333333", i);
 	}
 	current_session.membership[server_id - 1] = 0;
 }
 
-static int handle_membership_change(char **target_groups, int num_groups, int is_joined, char *target_member, char *target_group)
+// we are notified of a client joining/leaving the private group.
+// we will update our client data accordingly
+static int handle_client_membership_change(char **target_groups, int num_groups, int is_joined, char *target_member, char *target_group)
 {
 	u_int32_t server_id;
 	char client[20];
@@ -1482,7 +1493,7 @@ static int handle_membership_change(char **target_groups, int num_groups, int is
 			log_info("My client %s left", client);
 			hashmap_remove(current_session.clients, client);
 			length = current_session.chatrooms[*idx].num_of_participants[current_session.server_id - 1];
-			count = hash_set_remove(&current_session.chatrooms[*idx].participants[current_session.server_id - 1], length, current_session.server_id - 1, client);
+			count = hash_set_remove(&current_session.chatrooms[*idx].participants[current_session.server_id - 1], length, client);
 			current_session.chatrooms[*idx].num_of_participants[current_session.server_id - 1] = count;
 			send_participant_change_to_servers(current_session.chatrooms[*idx].name, client, *idx);
 			send_chatroom_update_to_clients(current_session.chatrooms[*idx].name, *idx);
@@ -1491,6 +1502,9 @@ static int handle_membership_change(char **target_groups, int num_groups, int is
 	return 0;
 }
 
+// we received a participant update message from other servers,
+// this message contains the list of participants that server has from all 5 servers (this helps path propagation)
+// we will update our participant data with the data from that server and every server that is not in current membership
 static int handle_participant_update(char *message, int msg_size)
 {
 	u_int32_t server_id, num_of_participants;
